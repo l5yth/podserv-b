@@ -22,10 +22,10 @@ mod media;
 mod render;
 
 use actix_files::Files;
-use actix_web::{get, web, App, HttpResponse, HttpServer};
+use actix_web::{App, HttpResponse, HttpServer, get, web};
 use config::Config;
 use id3::Tag;
-use media::{scan_sections, Section};
+use media::{Section, scan_sections};
 use std::fs;
 use std::path::{Component, Path};
 
@@ -34,10 +34,7 @@ use std::path::{Component, Path};
 /// Renders [`render::render_page`] with the pre-loaded [`Config`] and
 /// [`Section`] list, returning a complete HTML document.
 #[get("/")]
-async fn index(
-    config: web::Data<Config>,
-    sections: web::Data<Vec<Section>>,
-) -> HttpResponse {
+async fn index(config: web::Data<Config>, sections: web::Data<Vec<Section>>) -> HttpResponse {
     HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
         .body(render::render_page(&config, &sections))
@@ -113,7 +110,7 @@ async fn main() -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::{test, App};
+    use actix_web::{App, test};
     use id3::{Tag, TagLike, Version};
     use std::fs;
     use std::path::PathBuf;

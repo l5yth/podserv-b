@@ -154,32 +154,31 @@ fn scan_mp3s_in_dir(dir: &Path, media_dir: &str) -> Vec<Episode> {
             .map(|m| format!("{:.1}", m.len() as f64 / (1024.0 * 1024.0)))
             .unwrap_or_default();
 
-        let (title, artist, album, year, duration, has_art) =
-            match Tag::read_from_path(&path) {
-                Ok(tag) => {
-                    let t = tag.title().unwrap_or(&filename).to_string();
-                    let a = tag.artist().unwrap_or("Unknown").to_string();
-                    let al = tag.album().unwrap_or("").to_string();
-                    let y = tag.year().map(|y| y.to_string()).unwrap_or_default();
-                    let d = tag
-                        .duration()
-                        .map(|ms| {
-                            let s = ms / 1000;
-                            format!("{}:{:02}", s / 60, s % 60)
-                        })
-                        .unwrap_or_default();
-                    let art = tag.pictures().next().is_some();
-                    (t, a, al, y, d, art)
-                }
-                Err(_) => (
-                    filename.clone(),
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    false,
-                ),
-            };
+        let (title, artist, album, year, duration, has_art) = match Tag::read_from_path(&path) {
+            Ok(tag) => {
+                let t = tag.title().unwrap_or(&filename).to_string();
+                let a = tag.artist().unwrap_or("Unknown").to_string();
+                let al = tag.album().unwrap_or("").to_string();
+                let y = tag.year().map(|y| y.to_string()).unwrap_or_default();
+                let d = tag
+                    .duration()
+                    .map(|ms| {
+                        let s = ms / 1000;
+                        format!("{}:{:02}", s / 60, s % 60)
+                    })
+                    .unwrap_or_default();
+                let art = tag.pictures().next().is_some();
+                (t, a, al, y, d, art)
+            }
+            Err(_) => (
+                filename.clone(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                false,
+            ),
+        };
 
         episodes.push(Episode {
             rel_path,

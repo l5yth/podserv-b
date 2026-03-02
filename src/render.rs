@@ -57,11 +57,10 @@ pub fn render_page(config: &Config, sections: &[Section]) -> String {
             } else {
                 String::new()
             };
-            let meta_parts: Vec<&str> =
-                [ep.artist.as_str(), ep.album.as_str(), ep.year.as_str()]
-                    .into_iter()
-                    .filter(|s| !s.is_empty())
-                    .collect();
+            let meta_parts: Vec<&str> = [ep.artist.as_str(), ep.album.as_str(), ep.year.as_str()]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect();
             let meta = meta_parts.join(" \u{00b7} ");
             let dur = if ep.duration.is_empty() {
                 String::new()
@@ -333,16 +332,14 @@ mod tests {
 
     #[test]
     fn render_header_contains_description() {
-        let cfg =
-            toml::from_str::<Config>(r#"description = "Great shows""#).unwrap();
+        let cfg = toml::from_str::<Config>(r#"description = "Great shows""#).unwrap();
         let html = render_page(&cfg, &[]);
         assert!(html.contains("Great shows"));
     }
 
     #[test]
     fn render_footer_contains_website() {
-        let cfg =
-            toml::from_str::<Config>(r#"website = "https://mysite.example""#).unwrap();
+        let cfg = toml::from_str::<Config>(r#"website = "https://mysite.example""#).unwrap();
         let html = render_page(&cfg, &[]);
         assert!(html.contains("https://mysite.example"));
     }
@@ -363,14 +360,20 @@ mod tests {
 
     #[test]
     fn render_section_heading_appears() {
-        let sec = section("radio-shows", vec![make_ep("a.mp3", "T", "", "", "", "", "1.0", false)]);
+        let sec = section(
+            "radio-shows",
+            vec![make_ep("a.mp3", "T", "", "", "", "", "1.0", false)],
+        );
         let html = render_page(&default_config(), &[sec]);
         assert!(html.contains("radio-shows"));
     }
 
     #[test]
     fn render_one_episode_singular() {
-        let sec = section("podcasts", vec![make_ep("a.mp3", "T", "", "", "", "", "1.0", false)]);
+        let sec = section(
+            "podcasts",
+            vec![make_ep("a.mp3", "T", "", "", "", "", "1.0", false)],
+        );
         let html = render_page(&default_config(), &[sec]);
         assert!(html.contains("1 episode<"));
         assert!(!html.contains("1 episodes"));
@@ -399,14 +402,20 @@ mod tests {
 
     #[test]
     fn render_duration_shown() {
-        let sec = section("p", vec![make_ep("a.mp3", "T", "", "", "", "3:45", "1.0", false)]);
+        let sec = section(
+            "p",
+            vec![make_ep("a.mp3", "T", "", "", "", "3:45", "1.0", false)],
+        );
         let html = render_page(&default_config(), &[sec]);
         assert!(html.contains("[3:45]"));
     }
 
     #[test]
     fn render_empty_duration_hidden() {
-        let sec = section("p", vec![make_ep("a.mp3", "T", "", "", "", "", "1.0", false)]);
+        let sec = section(
+            "p",
+            vec![make_ep("a.mp3", "T", "", "", "", "", "1.0", false)],
+        );
         let html = render_page(&default_config(), &[sec]);
         assert!(!html.contains("[]"));
     }
@@ -415,7 +424,9 @@ mod tests {
     fn render_full_meta_joined() {
         let sec = section(
             "p",
-            vec![make_ep("a.mp3", "T", "Art", "Alb", "2024", "", "1.0", false)],
+            vec![make_ep(
+                "a.mp3", "T", "Art", "Alb", "2024", "", "1.0", false,
+            )],
         );
         let html = render_page(&default_config(), &[sec]);
         assert!(html.contains("Art"));
@@ -425,7 +436,10 @@ mod tests {
 
     #[test]
     fn render_partial_meta_filters_empty_fields() {
-        let sec = section("p", vec![make_ep("a.mp3", "T", "Art", "", "", "", "1.0", false)]);
+        let sec = section(
+            "p",
+            vec![make_ep("a.mp3", "T", "Art", "", "", "", "1.0", false)],
+        );
         let html = render_page(&default_config(), &[sec]);
         assert!(html.contains("Art"));
         assert!(!html.contains(" · ·"));
@@ -433,21 +447,30 @@ mod tests {
 
     #[test]
     fn render_title_html_escaped() {
-        let sec = section("p", vec![make_ep("a.mp3", "<b>", "", "", "", "", "1.0", false)]);
+        let sec = section(
+            "p",
+            vec![make_ep("a.mp3", "<b>", "", "", "", "", "1.0", false)],
+        );
         let html = render_page(&default_config(), &[sec]);
         assert!(html.contains("&lt;b&gt;"));
     }
 
     #[test]
     fn render_meta_html_escaped() {
-        let sec = section("p", vec![make_ep("a.mp3", "T", "A&B", "", "", "", "1.0", false)]);
+        let sec = section(
+            "p",
+            vec![make_ep("a.mp3", "T", "A&B", "", "", "", "1.0", false)],
+        );
         let html = render_page(&default_config(), &[sec]);
         assert!(html.contains("A&amp;B"));
     }
 
     #[test]
     fn render_duration_html_escaped() {
-        let sec = section("p", vec![make_ep("a.mp3", "T", "", "", "", "1<2", "1.0", false)]);
+        let sec = section(
+            "p",
+            vec![make_ep("a.mp3", "T", "", "", "", "1<2", "1.0", false)],
+        );
         let html = render_page(&default_config(), &[sec]);
         assert!(html.contains("[1&lt;2]"));
     }
@@ -456,14 +479,20 @@ mod tests {
 
     #[test]
     fn render_art_img_present_when_has_art() {
-        let sec = section("p", vec![make_ep("ep.mp3", "T", "", "", "", "", "1.0", true)]);
+        let sec = section(
+            "p",
+            vec![make_ep("ep.mp3", "T", "", "", "", "", "1.0", true)],
+        );
         let html = render_page(&default_config(), &[sec]);
         assert!(html.contains(r#"src="/art/ep.mp3""#));
     }
 
     #[test]
     fn render_art_img_absent_when_no_art() {
-        let sec = section("p", vec![make_ep("ep.mp3", "T", "", "", "", "", "1.0", false)]);
+        let sec = section(
+            "p",
+            vec![make_ep("ep.mp3", "T", "", "", "", "", "1.0", false)],
+        );
         let html = render_page(&default_config(), &[sec]);
         assert!(!html.contains("/art/ep.mp3"));
     }
@@ -480,7 +509,10 @@ mod tests {
 
     #[test]
     fn render_download_button_present() {
-        let sec = section("p", vec![make_ep("ep.mp3", "T", "", "", "", "", "1.0", false)]);
+        let sec = section(
+            "p",
+            vec![make_ep("ep.mp3", "T", "", "", "", "", "1.0", false)],
+        );
         let html = render_page(&default_config(), &[sec]);
         assert!(html.contains(r#"href="/media/ep.mp3""#));
         assert!(html.contains("download"));
@@ -519,14 +551,20 @@ mod tests {
 
     #[test]
     fn render_files_in_js() {
-        let sec = section("p", vec![make_ep("my file.mp3", "T", "", "", "", "", "1.0", false)]);
+        let sec = section(
+            "p",
+            vec![make_ep("my file.mp3", "T", "", "", "", "", "1.0", false)],
+        );
         let html = render_page(&default_config(), &[sec]);
         assert!(html.contains("\"my file.mp3\""));
     }
 
     #[test]
     fn render_titles_in_js() {
-        let sec = section("p", vec![make_ep("a.mp3", "My Title", "", "", "", "", "1.0", false)]);
+        let sec = section(
+            "p",
+            vec![make_ep("a.mp3", "My Title", "", "", "", "", "1.0", false)],
+        );
         let html = render_page(&default_config(), &[sec]);
         assert!(html.contains("\"My Title\""));
     }
@@ -534,8 +572,14 @@ mod tests {
     #[test]
     fn render_play_indices_span_sections() {
         // Two sections; second section episode should get global index 1
-        let s1 = section("a", vec![make_ep("a.mp3", "A", "", "", "", "", "1.0", false)]);
-        let s2 = section("b", vec![make_ep("b.mp3", "B", "", "", "", "", "1.0", false)]);
+        let s1 = section(
+            "a",
+            vec![make_ep("a.mp3", "A", "", "", "", "", "1.0", false)],
+        );
+        let s2 = section(
+            "b",
+            vec![make_ep("b.mp3", "B", "", "", "", "", "1.0", false)],
+        );
         let html = render_page(&default_config(), &[s1, s2]);
         assert!(html.contains("onclick=\"play(0)\""));
         assert!(html.contains("onclick=\"play(1)\""));
