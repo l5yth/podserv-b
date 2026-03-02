@@ -23,7 +23,7 @@ use crate::media::Section;
 /// - A `<header>` with the site title and description.
 /// - One `<section>` per [`Section`], each with a heading, episode count,
 ///   and episode rows containing album art, metadata, and a download link.
-/// - A fixed bottom player bar.
+/// - A fixed bottom player bar showing cover art and "artist – title".
 /// - A `<footer>` linking to the configured website and the project repository.
 ///
 /// All user-supplied strings are HTML-escaped. Episode filenames in the
@@ -39,8 +39,18 @@ pub fn render_page(config: &Config, sections: &[Section]) -> String {
         .iter()
         .flat_map(|s| s.episodes.iter().map(|e| e.title.as_str()))
         .collect();
+    let all_artists: Vec<&str> = sections
+        .iter()
+        .flat_map(|s| s.episodes.iter().map(|e| e.artist.as_str()))
+        .collect();
+    let all_has_art: Vec<bool> = sections
+        .iter()
+        .flat_map(|s| s.episodes.iter().map(|e| e.has_art))
+        .collect();
     let files_json = serde_json::to_string(&all_rel_paths).unwrap();
     let titles_json = serde_json::to_string(&all_titles).unwrap();
+    let artists_json = serde_json::to_string(&all_artists).unwrap();
+    let has_art_json = serde_json::to_string(&all_has_art).unwrap();
     let total = all_rel_paths.len();
 
     // Render each section
@@ -119,7 +129,11 @@ h2.sh{{font-size:.8rem;color:#888;margin:1rem 0 .3rem;text-transform:uppercase;l
 .dl-btn{{width:2.5rem;height:2.5rem;display:flex;align-items:center;justify-content:center;color:#444;text-decoration:none;flex-shrink:0;font-size:.9rem}}
 .dl-btn:hover{{color:#999;background:#1a1a1a}}
 #player-bar{{position:fixed;bottom:0;left:0;right:0;background:#0a0a0a;border-top:1px solid #222;padding:.6rem 1rem;display:none;font-size:.75rem}}
-#player-bar .now{{color:#999;margin-bottom:.3rem}}
+#player-inner{{display:flex;align-items:center;gap:.75rem}}
+#player-art{{width:2.5rem;height:2.5rem;flex-shrink:0;background:#1a1a1a;overflow:hidden}}
+#player-art img{{width:100%;height:100%;object-fit:cover;display:block}}
+#player-info{{flex:1;min-width:0}}
+#player-bar .now{{color:#999;margin-bottom:.3rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 #player-bar audio{{width:100%;height:28px;filter:grayscale(1)}}
 footer{{font-size:.7rem;color:#555;margin-top:2rem;padding-top:.6rem;border-top:1px solid #222}}
 footer a{{color:#555;text-decoration:none}}
@@ -132,19 +146,27 @@ footer a:hover{{color:#aaa}}
 <p class="desc">{desc_esc}</p>
 </header>
 <main>{sections_html}</main>
-<footer><a href="{website_url}">{website_esc}</a></footer>
+<footer><a href="{website_url}">{website_esc}</a> &middot; powered by <a href="https://github.com/l5yth/podserv-b">podserv-b</a></footer>
 <div id="player-bar">
-  <div class="now" id="now"></div>
-  <audio id="audio" controls preload="none"></audio>
+  <div id="player-inner">
+    <div id="player-art"></div>
+    <div id="player-info">
+      <div class="now" id="now"></div>
+      <audio id="audio" controls preload="none"></audio>
+    </div>
+  </div>
 </div>
 <script>
 const files={files_json};
 const titles={titles_json};
+const artists={artists_json};
+const hasArt={has_art_json};
 const total={total};
 let cur=-1;
 const audio=document.getElementById('audio');
 const bar=document.getElementById('player-bar');
 const now=document.getElementById('now');
+const playerArt=document.getElementById('player-art');
 function encodeRelPath(p){{return p.split('/').map(encodeURIComponent).join('/');}}
 function play(i){{
   if(cur>=0)document.querySelectorAll('.ep')[cur].classList.remove('active');
@@ -152,7 +174,13 @@ function play(i){{
   document.querySelectorAll('.ep')[cur].classList.add('active');
   audio.src='/media/'+encodeRelPath(files[i]);
   audio.play();
-  now.textContent=titles[i];
+  const a=artists[i],t=titles[i];
+  now.textContent=a?a+' \u2013 '+t:t;
+  if(hasArt[i]){{
+    playerArt.innerHTML='<img src="/art/'+encodeRelPath(files[i])+'" alt="">';
+  }}else{{
+    playerArt.innerHTML='';
+  }}
   bar.style.display='block';
 }}
 audio.addEventListener('ended',()=>{{if(cur<total-1)play(cur+1);}});
@@ -166,6 +194,8 @@ audio.addEventListener('ended',()=>{{if(cur<total-1)play(cur+1);}});
         sections_html = sections_html,
         files_json = files_json,
         titles_json = titles_json,
+        artists_json = artists_json,
+        has_art_json = has_art_json,
         total = total,
     )
 }
@@ -347,6 +377,13 @@ mod tests {
     fn render_footer_contains_default_website() {
         let html = render_page(&default_config(), &[]);
         assert!(html.contains("github.com/l5yth/podserv-b"));
+    }
+
+    #[test]
+    fn render_footer_contains_powered_by_link() {
+        let html = render_page(&default_config(), &[]);
+        assert!(html.contains("powered by"));
+        assert!(html.contains(r#"href="https://github.com/l5yth/podserv-b">podserv-b</a>"#));
     }
 
     #[test]
@@ -566,6 +603,57 @@ mod tests {
         );
         let html = render_page(&default_config(), &[sec]);
         assert!(html.contains("\"My Title\""));
+    }
+
+    #[test]
+    fn render_artists_in_js() {
+        let sec = section(
+            "p",
+            vec![make_ep(
+                "a.mp3",
+                "T",
+                "Cool Artist",
+                "",
+                "",
+                "",
+                "1.0",
+                false,
+            )],
+        );
+        let html = render_page(&default_config(), &[sec]);
+        assert!(html.contains("\"Cool Artist\""));
+    }
+
+    #[test]
+    fn render_has_art_true_in_js() {
+        let sec = section(
+            "p",
+            vec![make_ep("a.mp3", "T", "", "", "", "", "1.0", true)],
+        );
+        let html = render_page(&default_config(), &[sec]);
+        assert!(html.contains("const hasArt=[true]"));
+    }
+
+    #[test]
+    fn render_has_art_false_in_js() {
+        let sec = section(
+            "p",
+            vec![make_ep("a.mp3", "T", "", "", "", "", "1.0", false)],
+        );
+        let html = render_page(&default_config(), &[sec]);
+        assert!(html.contains("const hasArt=[false]"));
+    }
+
+    #[test]
+    fn render_player_bar_has_art_element() {
+        let html = render_page(&default_config(), &[]);
+        assert!(html.contains(r#"id="player-art""#));
+    }
+
+    #[test]
+    fn render_player_bar_has_info_element() {
+        let html = render_page(&default_config(), &[]);
+        assert!(html.contains(r#"id="player-info""#));
     }
 
     #[test]
