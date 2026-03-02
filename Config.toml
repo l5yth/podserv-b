@@ -1,0 +1,6 @@
+# podserv-b site configuration
+# All fields are optional. Remove the '#' to override a value.
+
+# title = "podserv-b"
+# description = "a minimalist podcast server (type b) for serving media files on the web"
+# website = "https://example.com"
