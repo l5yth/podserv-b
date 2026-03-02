@@ -9,6 +9,8 @@
 
 _a minimalist podcast server (type b) for serving media files on the web._
 
+![screenshot of the first version](assets/images/podserv-b-preview.png)
+
 scans a provided directory of MP3 files, reads their ID3 tags, and serves a
 minimalist-themed single-page web page with an embedded audio player, album
 art, and download links. supports flat and nested media directories.
