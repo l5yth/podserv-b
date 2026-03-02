@@ -4,5 +4,8 @@
 /target
 
 # Media files
-media/*.mp3
+media/**/*.mp3
+
+# Local config overrides
+Config.toml
 
