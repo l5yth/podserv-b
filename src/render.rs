@@ -108,7 +108,6 @@ h1{{font-size:1rem;color:#ccc}}
 .desc{{font-size:.75rem;color:#555;margin-top:.25rem}}
 h2.sh{{font-size:.8rem;color:#888;margin:1rem 0 .3rem;text-transform:uppercase;letter-spacing:.05em}}
 .count{{font-size:.7rem;color:#555;margin-bottom:.4rem}}
-.ep-list{{}}
 .ep{{display:flex;align-items:center;gap:.5rem;padding:.4rem .2rem;border-bottom:1px solid #1a1a1a;cursor:pointer}}
 .ep:hover{{background:#1a1a1a}}
 .ep.active{{background:#1a1a1a;color:#fff}}

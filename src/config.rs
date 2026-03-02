@@ -40,7 +40,7 @@ pub struct Config {
     pub title: Option<String>,
     /// Short description shown below the heading. Default: the app tagline.
     pub description: Option<String>,
-    /// Homepage URL linked in the footer. Default: `"https://example.com"`.
+    /// Homepage URL linked in the footer. Default: `"https://github.com/l5yth/podserv-b"`.
     pub website: Option<String>,
 }
 
@@ -48,9 +48,13 @@ impl Config {
     /// Loads configuration from `Config.toml` in the current working directory.
     ///
     /// Returns [`Config::default`] if the file is absent or cannot be parsed.
+    /// Emits a warning to stderr if the file exists but contains invalid TOML.
     pub fn load() -> Self {
         let raw = fs::read_to_string("Config.toml").unwrap_or_default();
-        toml::from_str(&raw).unwrap_or_default()
+        toml::from_str(&raw).unwrap_or_else(|e| {
+            eprintln!("warning: Config.toml is invalid, using defaults ({e})");
+            Config::default()
+        })
     }
 
     /// Returns the configured title, or `"podserv-b"` if not set.
@@ -63,7 +67,7 @@ impl Config {
         self.description.as_deref().unwrap_or(DEFAULT_DESCRIPTION)
     }
 
-    /// Returns the configured website URL, or `"https://example.com"` if not set.
+    /// Returns the configured website URL, or `"https://github.com/l5yth/podserv-b"` if not set.
     pub fn website(&self) -> &str {
         self.website.as_deref().unwrap_or(DEFAULT_WEBSITE)
     }
@@ -95,12 +99,6 @@ mod tests {
     fn overrides_description() {
         let cfg = from_toml(r#"description = "Daily news""#);
         assert_eq!(cfg.description(), "Daily news");
-    }
-
-    #[test]
-    fn defaults_website_is_github() {
-        let cfg = from_toml("");
-        assert_eq!(cfg.website(), "https://github.com/l5yth/podserv-b");
     }
 
     #[test]

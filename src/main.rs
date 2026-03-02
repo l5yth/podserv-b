@@ -91,7 +91,6 @@ async fn main() -> std::io::Result<()> {
     let config_data = web::Data::new(config);
     let sections_data = web::Data::new(sections);
     let media_dir_data = web::Data::new(media_dir.clone());
-    let media_dir_clone = media_dir.clone();
 
     HttpServer::new(move || {
         App::new()
@@ -100,7 +99,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(media_dir_data.clone())
             .service(index)
             .service(art)
-            .service(Files::new("/media", &media_dir_clone))
+            .service(Files::new("/media", &media_dir))
     })
     .bind(&bind)?
     .run()
