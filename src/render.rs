@@ -348,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn render_footer_contains_github_link() {
+    fn render_footer_contains_default_website() {
         let html = render_page(&default_config(), &[]);
         assert!(html.contains("github.com/l5yth/podserv-b"));
     }

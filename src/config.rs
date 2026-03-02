@@ -98,6 +98,12 @@ mod tests {
     }
 
     #[test]
+    fn defaults_website_is_github() {
+        let cfg = from_toml("");
+        assert_eq!(cfg.website(), "https://github.com/l5yth/podserv-b");
+    }
+
+    #[test]
     fn overrides_website() {
         let cfg = from_toml(r#"website = "https://example.org""#);
         assert_eq!(cfg.website(), "https://example.org");
