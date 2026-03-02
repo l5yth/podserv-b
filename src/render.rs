@@ -609,7 +609,16 @@ mod tests {
     fn render_artists_in_js() {
         let sec = section(
             "p",
-            vec![make_ep("a.mp3", "T", "Cool Artist", "", "", "", "1.0", false)],
+            vec![make_ep(
+                "a.mp3",
+                "T",
+                "Cool Artist",
+                "",
+                "",
+                "",
+                "1.0",
+                false,
+            )],
         );
         let html = render_page(&default_config(), &[sec]);
         assert!(html.contains("\"Cool Artist\""));
