@@ -129,24 +129,30 @@ pub fn render_rss(config: &Config, sections: &[Section]) -> String {
         .find_map(|e| {
             e.art.as_ref().map(|_| {
                 let enc = url_encode_path(&e.rel_path);
-                format!("{base}/art/{}", xml_escape(&enc))
+                format!("{base}/art/{enc}")
             })
         });
 
     let mut out = String::new();
 
     out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    out.push_str("<rss version=\"2.0\" xmlns:itunes=\"http://www.itunes.com/dtds/podcast-1.0.dtd\">\n");
+    out.push_str(
+        "<rss version=\"2.0\" xmlns:itunes=\"http://www.itunes.com/dtds/podcast-1.0.dtd\">\n",
+    );
     out.push_str("<channel>\n");
     out.push_str(&format!("  <title>{title}</title>\n"));
     out.push_str(&format!("  <link>{base}</link>\n"));
     out.push_str(&format!("  <description>{desc}</description>\n"));
     out.push_str(&format!("  <language>{lang}</language>\n"));
-    out.push_str(&format!("  <itunes:explicit>{explicit_str}</itunes:explicit>\n"));
+    out.push_str(&format!(
+        "  <itunes:explicit>{explicit_str}</itunes:explicit>\n"
+    ));
 
     if !author.is_empty() {
         let author_esc = xml_escape(author);
-        out.push_str(&format!("  <managingEditor>{author_esc}</managingEditor>\n"));
+        out.push_str(&format!(
+            "  <managingEditor>{author_esc}</managingEditor>\n"
+        ));
         out.push_str(&format!("  <itunes:author>{author_esc}</itunes:author>\n"));
     }
 
@@ -162,12 +168,13 @@ pub fn render_rss(config: &Config, sections: &[Section]) -> String {
         for (ep_idx, ep) in section.episodes.iter().enumerate() {
             let ep_num = ep_idx + 1;
             let enc = url_encode_path(&ep.rel_path);
-            let enc_esc = xml_escape(&enc);
-            let media_url = format!("{base}/media/{enc_esc}");
+            let media_url = format!("{base}/media/{enc}");
             let ep_title = xml_escape(&ep.title);
             let ep_artist = xml_escape(&ep.artist);
 
             // Build a human-readable description from available metadata.
+            // "Unknown" is the media scanner's fallback for a missing artist tag;
+            // suppress it here so the description stays clean.
             let mut desc_parts: Vec<String> = Vec::new();
             if !ep.artist.is_empty() && ep.artist != "Unknown" {
                 desc_parts.push(ep.artist.clone());
@@ -198,7 +205,7 @@ pub fn render_rss(config: &Config, sections: &[Section]) -> String {
             if !ep_desc.is_empty() {
                 out.push_str(&format!("    <description>{ep_desc}</description>\n"));
             }
-            if !ep.artist.is_empty() {
+            if !ep.artist.is_empty() && ep.artist != "Unknown" {
                 out.push_str(&format!("    <itunes:author>{ep_artist}</itunes:author>\n"));
             }
             if !ep.duration.is_empty() {
@@ -210,8 +217,7 @@ pub fn render_rss(config: &Config, sections: &[Section]) -> String {
             out.push_str(&format!("    <itunes:season>{season}</itunes:season>\n"));
             out.push_str(&format!("    <itunes:episode>{ep_num}</itunes:episode>\n"));
             if ep.art.is_some() {
-                let art_url = format!("{base}/art/{enc_esc}");
-                out.push_str(&format!("    <itunes:image href=\"{art_url}\"/>\n"));
+                out.push_str(&format!("    <itunes:image href=\"{base}/art/{enc}\"/>\n"));
             }
             out.push_str("  </item>\n");
         }
@@ -306,16 +312,14 @@ mod tests {
     #[test]
     fn format_pub_date_known_timestamp() {
         // 2024-01-15 12:30:45 UTC = 1705321845 seconds since epoch.
-        let t = SystemTime::UNIX_EPOCH
-            + std::time::Duration::from_secs(1_705_321_845);
+        let t = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_705_321_845);
         assert_eq!(format_pub_date(t), "Mon, 15 Jan 2024 12:30:45 +0000");
     }
 
     #[test]
     fn format_pub_date_leap_day() {
         // 2000-02-29 00:00:00 UTC = 951782400 seconds since epoch.
-        let t = SystemTime::UNIX_EPOCH
-            + std::time::Duration::from_secs(951_782_400);
+        let t = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(951_782_400);
         assert_eq!(format_pub_date(t), "Tue, 29 Feb 2000 00:00:00 +0000");
     }
 
@@ -404,6 +408,23 @@ mod tests {
         assert!(xml.contains("<link>https://pods.example.org</link>"));
     }
 
+    #[test]
+    fn render_rss_channel_description_special_chars_escaped() {
+        let cfg: Config = toml::from_str("description = \"News & <Views>\"").unwrap();
+        let xml = render_rss(&cfg, &[]);
+        assert!(xml.contains("<description>News &amp; &lt;Views&gt;</description>"));
+    }
+
+    #[test]
+    fn render_rss_unknown_artist_suppressed_from_itunes_author() {
+        let mut ep = make_ep("ep.mp3", false);
+        ep.artist = "Unknown".into();
+        let sec = section("podcasts", vec![ep]);
+        let xml = render_rss(&default_config(), &[sec]);
+        assert!(!xml.contains("<itunes:author>"));
+        assert!(!xml.contains("Unknown"));
+    }
+
     // --- render_rss: channel image ---
 
     #[test]
@@ -433,8 +454,7 @@ mod tests {
         let cfg = config_with_base("https://pods.example.com");
         let sec = section("podcasts", vec![make_ep("show/ep.mp3", false)]);
         let xml = render_rss(&cfg, &[sec]);
-        assert!(xml
-            .contains("url=\"https://pods.example.com/media/show/ep.mp3\""));
+        assert!(xml.contains("url=\"https://pods.example.com/media/show/ep.mp3\""));
         assert!(xml.contains("type=\"audio/mpeg\""));
     }
 
