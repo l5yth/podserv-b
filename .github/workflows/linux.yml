@@ -69,10 +69,14 @@ jobs:
           mkdir -p /etc/portage/package.accept_keywords
           printf "=media-sound/podserv-b-9999 **\n" > /etc/portage/package.accept_keywords/localrepo
 
+      - name: Install build dependencies
+        run: |
+          FEATURES="-ipc-sandbox -network-sandbox -pid-sandbox -mount-sandbox -usersandbox -userpriv" \
+            emerge --ask=n --oneshot dev-lang/rust-bin
+
       - name: Build and test ebuild
         run: |
+          export FEATURES="-ipc-sandbox -network-sandbox -pid-sandbox -mount-sandbox -usersandbox -userpriv"
           EBUILD=/var/db/repos/localrepo/media-sound/podserv-b/podserv-b-9999.ebuild
-          FEATURES="-ipc-sandbox -network-sandbox -pid-sandbox -mount-sandbox -usersandbox -userpriv" \
-            ebuild "${EBUILD}" manifest
-          FEATURES="-ipc-sandbox -network-sandbox -pid-sandbox -mount-sandbox -usersandbox -userpriv" \
-            ebuild "${EBUILD}" clean fetch unpack configure compile test install
+          ebuild "${EBUILD}" manifest
+          ebuild "${EBUILD}" clean fetch unpack configure compile test install

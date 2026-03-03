@@ -37,7 +37,7 @@ build() {
 
 check() {
   cd "${srcdir}/podserv-b"
-  cargo test --all --all-features --locked
+  cargo test --all --all-features --locked --offline
 }
 
 package() {
