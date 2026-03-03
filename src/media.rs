@@ -38,8 +38,11 @@ pub struct Episode {
     pub duration: String,
     /// File size in megabytes, formatted to one decimal place.
     pub size_mb: String,
-    /// Whether the ID3 tag contains embedded cover art.
-    pub has_art: bool,
+    /// Embedded cover art as `(mime_type, image_bytes)`.
+    ///
+    /// Only populated when the ID3 `APIC` frame is present and its MIME type
+    /// starts with `"image/"`. `None` means no art or an unrecognised type.
+    pub art: Option<(String, Vec<u8>)>,
 }
 
 /// A named group of episodes, corresponding to a media directory.
@@ -154,7 +157,7 @@ fn scan_mp3s_in_dir(dir: &Path, media_dir: &str) -> Vec<Episode> {
             .map(|m| format!("{:.1}", m.len() as f64 / (1024.0 * 1024.0)))
             .unwrap_or_default();
 
-        let (title, artist, album, year, duration, has_art) = match Tag::read_from_path(&path) {
+        let (title, artist, album, year, duration, art) = match Tag::read_from_path(&path) {
             Ok(tag) => {
                 let t = tag.title().unwrap_or(&filename).to_string();
                 let a = tag.artist().unwrap_or("Unknown").to_string();
@@ -167,16 +170,21 @@ fn scan_mp3s_in_dir(dir: &Path, media_dir: &str) -> Vec<Episode> {
                         format!("{}:{:02}", s / 60, s % 60)
                     })
                     .unwrap_or_default();
-                let art = tag.pictures().next().is_some();
+                // Only accept image/* MIME types to prevent Content-Type injection.
+                let art = tag
+                    .pictures()
+                    .next()
+                    .filter(|p| p.mime_type.starts_with("image/"))
+                    .map(|p| (p.mime_type.clone(), p.data.clone()));
                 (t, a, al, y, d, art)
             }
             Err(_) => (
                 filename.clone(),
+                "Unknown".to_string(),
                 String::new(),
                 String::new(),
                 String::new(),
-                String::new(),
-                false,
+                None,
             ),
         };
 
@@ -188,7 +196,7 @@ fn scan_mp3s_in_dir(dir: &Path, media_dir: &str) -> Vec<Episode> {
             year,
             duration,
             size_mb,
-            has_art,
+            art,
         });
     }
     episodes
@@ -289,8 +297,8 @@ mod tests {
         assert_eq!(eps.len(), 1);
         assert_eq!(eps[0].rel_path, "ep.mp3");
         assert_eq!(eps[0].title, "ep.mp3");
-        assert!(eps[0].artist.is_empty());
-        assert!(!eps[0].has_art);
+        assert_eq!(eps[0].artist, "Unknown");
+        assert!(eps[0].art.is_none());
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -314,7 +322,7 @@ mod tests {
         assert_eq!(eps[0].album, "My Album");
         assert_eq!(eps[0].year, "2024");
         assert_eq!(eps[0].duration, "3:45");
-        assert!(!eps[0].has_art);
+        assert!(eps[0].art.is_none());
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -332,7 +340,25 @@ mod tests {
         fs::write(&path, []).unwrap();
         tag.write_to_path(&path, Version::Id3v23).unwrap();
         let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap());
-        assert!(eps[0].has_art);
+        assert!(eps[0].art.is_some());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn scan_mp3s_non_image_mime_type_excluded() {
+        let dir = new_temp_dir();
+        let path = dir.join("html-art.mp3");
+        let mut tag = Tag::new();
+        tag.add_frame(id3::frame::Picture {
+            mime_type: "text/html".into(), // not image/* — must be rejected
+            picture_type: id3::frame::PictureType::CoverFront,
+            description: String::new(),
+            data: b"<script>alert(1)</script>".to_vec(),
+        });
+        fs::write(&path, []).unwrap();
+        tag.write_to_path(&path, Version::Id3v23).unwrap();
+        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap());
+        assert!(eps[0].art.is_none());
         fs::remove_dir_all(dir).unwrap();
     }
 

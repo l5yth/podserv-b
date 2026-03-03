@@ -45,7 +45,7 @@ pub fn render_page(config: &Config, sections: &[Section]) -> String {
         .collect();
     let all_has_art: Vec<bool> = sections
         .iter()
-        .flat_map(|s| s.episodes.iter().map(|e| e.has_art))
+        .flat_map(|s| s.episodes.iter().map(|e| e.art.is_some()))
         .collect();
     let files_json = serde_json::to_string(&all_rel_paths).unwrap();
     let titles_json = serde_json::to_string(&all_titles).unwrap();
@@ -62,7 +62,7 @@ pub fn render_page(config: &Config, sections: &[Section]) -> String {
         let mut rows = String::new();
         for ep in &section.episodes {
             let enc = url_encode_path(&ep.rel_path);
-            let art_tag = if ep.has_art {
+            let art_tag = if ep.art.is_some() {
                 format!(r#"<img src="/art/{enc}" alt="" loading="lazy">"#)
             } else {
                 String::new()
@@ -101,7 +101,6 @@ pub fn render_page(config: &Config, sections: &[Section]) -> String {
     let title_esc = html_escape(config.title());
     let desc_esc = html_escape(config.description());
     let website_esc = html_escape(config.website());
-    let website_url = config.website();
 
     format!(
         r#"<!DOCTYPE html>
@@ -146,7 +145,7 @@ footer a:hover{{color:#aaa}}
 <p class="desc">{desc_esc}</p>
 </header>
 <main>{sections_html}</main>
-<footer><a href="{website_url}">{website_esc}</a> &middot; powered by <a href="https://github.com/l5yth/podserv-b">podserv-b</a></footer>
+<footer><a href="{website_esc}">{website_esc}</a> &middot; powered by <a href="https://github.com/l5yth/podserv-b">podserv-b</a></footer>
 <div id="player-bar">
   <div id="player-inner">
     <div id="player-art"></div>
@@ -190,7 +189,6 @@ audio.addEventListener('ended',()=>{{if(cur<total-1)play(cur+1);}});
         title_esc = title_esc,
         desc_esc = desc_esc,
         website_esc = website_esc,
-        website_url = website_url,
         sections_html = sections_html,
         files_json = files_json,
         titles_json = titles_json,
@@ -268,7 +266,11 @@ mod tests {
             year: year.into(),
             duration: duration.into(),
             size_mb: size_mb.into(),
-            has_art,
+            art: if has_art {
+                Some(("image/jpeg".into(), vec![]))
+            } else {
+                None
+            },
         }
     }
 
@@ -377,6 +379,15 @@ mod tests {
     fn render_footer_contains_default_website() {
         let html = render_page(&default_config(), &[]);
         assert!(html.contains("github.com/l5yth/podserv-b"));
+    }
+
+    #[test]
+    fn render_footer_website_href_html_escaped() {
+        // & in the URL must appear as &amp; in the href attribute to be valid HTML
+        let cfg = toml::from_str::<Config>(r#"website = "https://example.org/?a=1&b=2""#).unwrap();
+        let html = render_page(&cfg, &[]);
+        assert!(html.contains(r#"href="https://example.org/?a=1&amp;b=2""#));
+        assert!(!html.contains(r#"href="https://example.org/?a=1&b=2""#));
     }
 
     #[test]
