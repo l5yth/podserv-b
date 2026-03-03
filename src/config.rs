@@ -138,7 +138,8 @@ mod tests {
 
     #[test]
     fn load_valid_file() {
-        let path = std::env::temp_dir().join("podserv_b_config_valid.toml");
+        let path = std::env::temp_dir()
+            .join(format!("podserv_b_config_valid_{}.toml", std::process::id()));
         std::fs::write(&path, r#"title = "FileTest""#).unwrap();
         let cfg = Config::load(path.to_str().unwrap());
         std::fs::remove_file(&path).ok();
@@ -147,7 +148,8 @@ mod tests {
 
     #[test]
     fn load_invalid_file_gives_default() {
-        let path = std::env::temp_dir().join("podserv_b_config_invalid.toml");
+        let path = std::env::temp_dir()
+            .join(format!("podserv_b_config_invalid_{}.toml", std::process::id()));
         std::fs::write(&path, "!!!invalid!!!").unwrap();
         let cfg = Config::load(path.to_str().unwrap());
         std::fs::remove_file(&path).ok();

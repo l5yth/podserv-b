@@ -41,13 +41,20 @@ src_install() {
 	cargo_src_install
 	einstalldocs
 
-	# Default config — kept as a template; admin edits in place.
+	# Ship an example config so upgrades never clobber admin edits.
 	insinto /etc
-	newins "${S}/Config.toml" podserv-b.toml
+	newins "${S}/Config.toml" podserv-b.toml.example
 
 	# Media directory owned by the service user.
 	keepdir /srv/podcasts
 	fowners podserv-b:podserv-b /srv/podcasts
 
 	use systemd && systemd_dounit "${S}/packaging/systemd/podserv-b.service"
+}
+
+pkg_postinst() {
+	if [[ ! -e "${EROOT}/etc/podserv-b.toml" ]]; then
+		elog "No config file found. Copy the example to get started:"
+		elog "  cp /etc/podserv-b.toml.example /etc/podserv-b.toml"
+	fi
 }

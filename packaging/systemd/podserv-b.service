@@ -24,8 +24,12 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-# Allow reading the media directory (remove if the server needs write access too).
+# Media files are read once at startup; no runtime write access is needed.
 ReadOnlyPaths=/srv/podcasts
+LockPersonality=true
+RestrictRealtime=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target

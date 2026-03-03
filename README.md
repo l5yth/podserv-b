@@ -25,14 +25,10 @@ for linux packages see [archlinux/PKGBUILD](./packaging/archlinux/PKGBUILD)
 or
 [gentoo/podserv-b-9999.ebuild](./packaging/gentoo/media-sound/podserv-b/podserv-b-9999.ebuild)
 
-to deploy a systemd unit:
+to deploy as a systemd service (packages handle the user/dir automatically):
 
 ```sh
-# create user once (the linux packages post_install do this automatically)
-useradd --system --home /srv/podcasts --shell /sbin/nologin podserv-b
-chown podserv-b:podserv-b /srv/podcasts
-
-# drop your mp3s in /srv/podcasts, edit /etc/podserv-b.toml, then:
+cp /etc/podserv-b.toml.example /etc/podserv-b.toml  # edit to taste
 systemctl enable --now podserv-b
 ```
 
@@ -70,22 +66,3 @@ website     = "https://example-b.com"
 
 all fields are optional; defaults are used when the file is absent.
 
-### running as a service
-
-a systemd unit is provided in [`packaging/systemd/podserv-b.service`](./packaging/systemd/podserv-b.service).
-it runs as a dedicated `podserv-b` system user and expects:
-
-| path | purpose |
-|------|---------|
-| `/etc/podserv-b.toml` | site config (title, description, website) |
-| `/srv/podcasts` | media directory — drop mp3s here |
-
-```sh
-# create user and media directory (distro packages do this automatically)
-useradd --system --home /srv/podcasts --shell /sbin/nologin podserv-b
-mkdir -p /srv/podcasts && chown podserv-b:podserv-b /srv/podcasts
-
-# install and start
-install -Dm644 packaging/systemd/podserv-b.service /usr/lib/systemd/system/
-systemctl enable --now podserv-b
-```
