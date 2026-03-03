@@ -72,7 +72,7 @@ jobs:
       - name: Install build dependencies
         run: |
           FEATURES="-ipc-sandbox -network-sandbox -pid-sandbox -mount-sandbox -usersandbox -userpriv" \
-            emerge --ask=n --oneshot dev-lang/rust-bin
+            emerge --ask=n --oneshot dev-lang/rust-bin dev-vcs/git
 
       - name: Build and test ebuild
         run: |
