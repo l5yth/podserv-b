@@ -55,11 +55,11 @@ use std::path::{Component, Path};
 )]
 struct Cli {
     /// Directory containing MP3 files to serve.
-    #[arg(long, short = 'm', default_value = "media")]
+    #[arg(long, short = 'm', env = "MEDIA_DIR", default_value = "media")]
     media: String,
 
     /// Address to bind the HTTP server to.
-    #[arg(long, short = 'b', default_value = "127.0.0.1:3000")]
+    #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:3000")]
     bind: String,
 }
 
@@ -248,6 +248,22 @@ mod tests {
             .unwrap();
         assert_eq!(cli.media, "/data");
         assert_eq!(cli.bind, "0.0.0.0:8080");
+    }
+
+    #[test]
+    fn cli_env_var_fallback() {
+        // SAFETY: single-threaded test process; no other thread reads these vars.
+        unsafe {
+            std::env::set_var("MEDIA_DIR", "/env/media");
+            std::env::set_var("BIND", "0.0.0.0:9090");
+        }
+        let cli = Cli::try_parse_from(["podserv-b"]).unwrap();
+        unsafe {
+            std::env::remove_var("MEDIA_DIR");
+            std::env::remove_var("BIND");
+        }
+        assert_eq!(cli.media, "/env/media");
+        assert_eq!(cli.bind, "0.0.0.0:9090");
     }
 
     #[test]
