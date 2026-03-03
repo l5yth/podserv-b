@@ -1,0 +1,31 @@
+# Copyright (c) 2026 l5yth
+# SPDX-License-Identifier: Apache-2.0
+
+[Unit]
+Description=podserv-b podcast server
+Documentation=https://github.com/l5yth/podserv-b
+After=network.target
+
+[Service]
+Type=simple
+User=podserv-b
+Group=podserv-b
+
+ExecStart=/usr/bin/podserv-b \
+    --config /etc/podserv-b.toml \
+    --media  /srv/podcasts       \
+    --bind   127.0.0.1:3000
+
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Allow reading the media directory (remove if the server needs write access too).
+ReadOnlyPaths=/srv/podcasts
+
+[Install]
+WantedBy=multi-user.target

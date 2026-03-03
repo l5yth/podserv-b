@@ -24,10 +24,11 @@ const DEFAULT_WEBSITE: &str = "https://github.com/l5yth/podserv-b";
 
 /// Site-wide configuration for the web interface.
 ///
-/// Read from `Config.toml` in the working directory at startup. All fields
-/// are optional; the documented defaults are used for any field that is absent.
+/// Read from a TOML file whose path is given by the `--config` CLI flag
+/// (default: `/etc/podserv-b.toml`). All fields are optional; the documented
+/// defaults are used for any field that is absent.
 ///
-/// # Example `Config.toml`
+/// # Example config file
 ///
 /// ```toml
 /// title       = "My Radio"
@@ -45,14 +46,14 @@ pub struct Config {
 }
 
 impl Config {
-    /// Loads configuration from `Config.toml` in the current working directory.
+    /// Loads configuration from the TOML file at `path`.
     ///
     /// Returns [`Config::default`] if the file is absent or cannot be parsed.
     /// Emits a warning to stderr if the file exists but contains invalid TOML.
-    pub fn load() -> Self {
-        let raw = fs::read_to_string("Config.toml").unwrap_or_default();
+    pub fn load(path: &str) -> Self {
+        let raw = fs::read_to_string(path).unwrap_or_default();
         toml::from_str(&raw).unwrap_or_else(|e| {
-            eprintln!("warning: Config.toml is invalid, using defaults ({e})");
+            eprintln!("warning: {path} is invalid, using defaults ({e})");
             Config::default()
         })
     }
@@ -124,6 +125,32 @@ mod tests {
     #[test]
     fn invalid_toml_gives_default() {
         let cfg: Config = toml::from_str("!!!invalid!!!").unwrap_or_default();
+        assert_eq!(cfg.title(), DEFAULT_TITLE);
+    }
+
+    #[test]
+    fn load_nonexistent_path_gives_default() {
+        let cfg = Config::load("/nonexistent/path/podserv-b-test.toml");
+        assert_eq!(cfg.title(), DEFAULT_TITLE);
+        assert_eq!(cfg.description(), DEFAULT_DESCRIPTION);
+        assert_eq!(cfg.website(), DEFAULT_WEBSITE);
+    }
+
+    #[test]
+    fn load_valid_file() {
+        let path = std::env::temp_dir().join("podserv_b_config_valid.toml");
+        std::fs::write(&path, r#"title = "FileTest""#).unwrap();
+        let cfg = Config::load(path.to_str().unwrap());
+        std::fs::remove_file(&path).ok();
+        assert_eq!(cfg.title(), "FileTest");
+    }
+
+    #[test]
+    fn load_invalid_file_gives_default() {
+        let path = std::env::temp_dir().join("podserv_b_config_invalid.toml");
+        std::fs::write(&path, "!!!invalid!!!").unwrap();
+        let cfg = Config::load(path.to_str().unwrap());
+        std::fs::remove_file(&path).ok();
         assert_eq!(cfg.title(), DEFAULT_TITLE);
     }
 }

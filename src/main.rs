@@ -54,6 +54,15 @@ use std::path::{Component, Path};
     )
 )]
 struct Cli {
+    /// Path to the TOML configuration file.
+    #[arg(
+        long,
+        short = 'c',
+        env = "CONFIG",
+        default_value = "/etc/podserv-b.toml"
+    )]
+    config: String,
+
     /// Directory containing MP3 files to serve.
     #[arg(long, short = 'm', env = "MEDIA_DIR", default_value = "media")]
     media: String,
@@ -170,7 +179,7 @@ async fn main() -> std::io::Result<()> {
         eprintln!("created {media_dir}/ — drop mp3s there and restart");
     }
 
-    let config = Config::load();
+    let config = Config::load(&cli.config);
     let sections = scan_sections(&media_dir);
     let total: usize = sections.iter().map(|s| s.episodes.len()).sum();
     eprintln!(
@@ -236,9 +245,9 @@ mod tests {
 
     // --- Cli ---
     //
-    // Tests that read or write MEDIA_DIR/BIND must hold ENV_LOCK for their
-    // entire duration so they do not race with each other or with pre-existing
-    // values in the process environment.
+    // Tests that read or write MEDIA_DIR/BIND/CONFIG must hold ENV_LOCK for
+    // their entire duration so they do not race with each other or with
+    // pre-existing values in the process environment.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
@@ -246,18 +255,29 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         // SAFETY: ENV_LOCK serialises all env-var access in this test module.
         unsafe {
+            std::env::remove_var("CONFIG");
             std::env::remove_var("MEDIA_DIR");
             std::env::remove_var("BIND");
         }
         let cli = Cli::try_parse_from(["podserv-b"]).unwrap();
+        assert_eq!(cli.config, "/etc/podserv-b.toml");
         assert_eq!(cli.media, "media");
         assert_eq!(cli.bind, "127.0.0.1:3000");
     }
 
     #[test]
     fn cli_custom_args() {
-        let cli = Cli::try_parse_from(["podserv-b", "--media", "/data", "--bind", "0.0.0.0:8080"])
-            .unwrap();
+        let cli = Cli::try_parse_from([
+            "podserv-b",
+            "--config",
+            "/tmp/my.toml",
+            "--media",
+            "/data",
+            "--bind",
+            "0.0.0.0:8080",
+        ])
+        .unwrap();
+        assert_eq!(cli.config, "/tmp/my.toml");
         assert_eq!(cli.media, "/data");
         assert_eq!(cli.bind, "0.0.0.0:8080");
     }
@@ -267,21 +287,34 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         // SAFETY: ENV_LOCK serialises all env-var access in this test module.
         unsafe {
+            std::env::set_var("CONFIG", "/tmp/env.toml");
             std::env::set_var("MEDIA_DIR", "/env/media");
             std::env::set_var("BIND", "0.0.0.0:9090");
         }
         let cli = Cli::try_parse_from(["podserv-b"]).unwrap();
         unsafe {
+            std::env::remove_var("CONFIG");
             std::env::remove_var("MEDIA_DIR");
             std::env::remove_var("BIND");
         }
+        assert_eq!(cli.config, "/tmp/env.toml");
         assert_eq!(cli.media, "/env/media");
         assert_eq!(cli.bind, "0.0.0.0:9090");
     }
 
     #[test]
     fn cli_short_aliases() {
-        let cli = Cli::try_parse_from(["podserv-b", "-m", "/data", "-b", "0.0.0.0:8080"]).unwrap();
+        let cli = Cli::try_parse_from([
+            "podserv-b",
+            "-c",
+            "/tmp/my.toml",
+            "-m",
+            "/data",
+            "-b",
+            "0.0.0.0:8080",
+        ])
+        .unwrap();
+        assert_eq!(cli.config, "/tmp/my.toml");
         assert_eq!(cli.media, "/data");
         assert_eq!(cli.bind, "0.0.0.0:8080");
     }

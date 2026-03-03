@@ -39,15 +39,17 @@ Command-line arguments
 Usage: podserv-b [OPTIONS]
 
 Options:
-  -m, --media <MEDIA>  Directory containing MP3 files to serve [env: MEDIA_DIR=] [default: media]
-  -b, --bind <BIND>    Address to bind the HTTP server to [env: BIND=] [default: 127.0.0.1:3000]
-  -h, --help           Print help
-  -V, --version        Print version
+  -c, --config <CONFIG>  Path to the TOML configuration file [env: CONFIG=] [default: /etc/podserv-b.toml]
+  -m, --media <MEDIA>    Directory containing MP3 files to serve [env: MEDIA_DIR=] [default: media]
+  -b, --bind <BIND>      Address to bind the HTTP server to [env: BIND=] [default: 127.0.0.1:3000]
+  -h, --help             Print help
+  -V, --version          Print version
 ```
 
 ### configuration
 
-create `Config.toml` in the working directory to customise the page:
+the config file is a TOML file read at startup. pass its path with `-c` / `--config`
+(or the `CONFIG` env var). the default path is `/etc/podserv-b.toml`.
 
 ```toml
 title       = "My Podserv B"
@@ -56,3 +58,23 @@ website     = "https://example-b.com"
 ```
 
 all fields are optional; defaults are used when the file is absent.
+
+### running as a service
+
+a systemd unit is provided in [`packaging/systemd/podserv-b.service`](./packaging/systemd/podserv-b.service).
+it runs as a dedicated `podserv-b` system user and expects:
+
+| path | purpose |
+|------|---------|
+| `/etc/podserv-b.toml` | site config (title, description, website) |
+| `/srv/podcasts` | media directory — drop mp3s here |
+
+```sh
+# create user and media directory (distro packages do this automatically)
+useradd --system --home /srv/podcasts --shell /sbin/nologin podserv-b
+mkdir -p /srv/podcasts && chown podserv-b:podserv-b /srv/podcasts
+
+# install and start
+install -Dm644 packaging/systemd/podserv-b.service /usr/lib/systemd/system/
+systemctl enable --now podserv-b
+```
