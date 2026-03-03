@@ -11,34 +11,38 @@ _a minimalist podcast server (type b) for serving media files on the web._
 
 ![screenshot of the first version](assets/images/podserv-b-preview.png)
 
-scans a provided directory of MP3 files, reads their ID3 tags, and serves a
+scans a provided directory of mp3 files, reads their id3 tags, and serves a
 minimalist-themed single-page web page with an embedded audio player, album
 art, and download links. supports flat and nested media directories.
 
 ## installation
 
 ```sh
-cargo build --release
+cargo install podserv-b
 ```
-binary is at `target/release/podserv-b`
+
+for linux packages see [archlinux/PKGBUILD](./packaging/archlinux/PKGBUILD)
+or
+[gentoo/podserv-b-9999.ebuild](./packaging/gentoo/media-sound/podserv-b/podserv-b-9999.ebuild)
 
 ## usage
 
-```sh
-./target/release/podserv-b
-```
-
-open `http://127.0.0.1:3000` in a browser.
-
-### environment
-
-| Variable    | Default           | Description                      |
-|-------------|-------------------|----------------------------------|
-| `MEDIA_DIR` | `media`           | Path to the directory of MP3s    |
-| `BIND`      | `127.0.0.1:3000`  | Address and port to listen on    |
+`podserv-b` binds to `127.0.0.1:3000` and serves mp3 files in `./media` by default
 
 ```sh
-MEDIA_DIR=/srv/podcasts BIND=0.0.0.0:8080 ./podserv-b
+podserv-b v0.1.1
+a minimalist podcast server (type b) for serving media files on the web
+apache v2 (c) 2026 l5yth
+
+Command-line arguments
+
+Usage: podserv-b [OPTIONS]
+
+Options:
+  -m, --media <MEDIA>  Directory containing MP3 files to serve [default: media]
+  -b, --bind <BIND>    Address to bind the HTTP server to [default: 127.0.0.1:3000]
+  -h, --help           Print help
+  -V, --version        Print version
 ```
 
 ### configuration
@@ -46,9 +50,9 @@ MEDIA_DIR=/srv/podcasts BIND=0.0.0.0:8080 ./podserv-b
 create `Config.toml` in the working directory to customise the page:
 
 ```toml
-title       = "Funkfabrik B"
-description = "FM Radio for Punks, Listeners, and Dogs"
-website     = "https://funkfabrik-b.de"
+title       = "My Podserv B"
+description = "Station for Podcast Lovers, Listeners, and Dogs"
+website     = "https://example-b.com"
 ```
 
 all fields are optional; defaults are used when the file is absent.

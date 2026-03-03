@@ -26,6 +26,7 @@ use actix_files::Files;
 use actix_governor::{Governor, GovernorConfigBuilder};
 use actix_web::http::header;
 use actix_web::{App, HttpRequest, HttpResponse, HttpServer, get, web};
+use clap::Parser;
 use config::Config;
 use media::{Section, scan_sections};
 use std::collections::HashMap;
@@ -33,6 +34,34 @@ use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Component, Path};
+
+/// Command-line arguments.
+#[derive(Parser)]
+#[command(
+    version = concat!(
+        "v",
+        env!("CARGO_PKG_VERSION"),
+        "\n",
+        env!("CARGO_PKG_DESCRIPTION"),
+        "\napache v2 (c) 2026 l5yth"
+    ),
+    before_help = concat!(
+        "podserv-b v",
+        env!("CARGO_PKG_VERSION"),
+        "\n",
+        env!("CARGO_PKG_DESCRIPTION"),
+        "\napache v2 (c) 2026 l5yth"
+    )
+)]
+struct Cli {
+    /// Directory containing MP3 files to serve.
+    #[arg(long, short = 'm', default_value = "media")]
+    media: String,
+
+    /// Address to bind the HTTP server to.
+    #[arg(long, short = 'b', default_value = "127.0.0.1:3000")]
+    bind: String,
+}
 
 /// Pre-rendered index page and its HTTP ETag.
 struct PageCache {
@@ -131,8 +160,9 @@ async fn art(req_path: web::Path<String>, art_map: web::Data<ArtMap>) -> HttpRes
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let media_dir = std::env::var("MEDIA_DIR").unwrap_or_else(|_| "media".into());
-    let bind = std::env::var("BIND").unwrap_or_else(|_| "127.0.0.1:3000".into());
+    let cli = Cli::parse();
+    let media_dir = cli.media;
+    let bind = cli.bind;
 
     let media_path = Path::new(&media_dir);
     if !media_path.exists() {
@@ -201,6 +231,30 @@ mod tests {
                 None
             },
         }
+    }
+
+    // --- Cli ---
+
+    #[test]
+    fn cli_defaults() {
+        let cli = Cli::try_parse_from(["podserv-b"]).unwrap();
+        assert_eq!(cli.media, "media");
+        assert_eq!(cli.bind, "127.0.0.1:3000");
+    }
+
+    #[test]
+    fn cli_custom_args() {
+        let cli = Cli::try_parse_from(["podserv-b", "--media", "/data", "--bind", "0.0.0.0:8080"])
+            .unwrap();
+        assert_eq!(cli.media, "/data");
+        assert_eq!(cli.bind, "0.0.0.0:8080");
+    }
+
+    #[test]
+    fn cli_short_aliases() {
+        let cli = Cli::try_parse_from(["podserv-b", "-m", "/data", "-b", "0.0.0.0:8080"]).unwrap();
+        assert_eq!(cli.media, "/data");
+        assert_eq!(cli.bind, "0.0.0.0:8080");
     }
 
     // --- compute_etag ---
