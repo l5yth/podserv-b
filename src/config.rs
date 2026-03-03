@@ -21,6 +21,7 @@ const DEFAULT_TITLE: &str = "podserv-b";
 const DEFAULT_DESCRIPTION: &str =
     "a minimalist podcast server (type b) for serving media files on the web";
 const DEFAULT_WEBSITE: &str = "https://github.com/l5yth/podserv-b";
+const DEFAULT_LANGUAGE: &str = "en";
 
 /// Site-wide configuration for the web interface.
 ///
@@ -34,6 +35,10 @@ const DEFAULT_WEBSITE: &str = "https://github.com/l5yth/podserv-b";
 /// title       = "My Radio"
 /// description = "Weekly shows and more"
 /// website     = "https://mysite.example"
+/// base_url    = "https://pods.mysite.example"
+/// author      = "Jane Smith"
+/// language    = "en"
+/// explicit    = false
 /// ```
 #[derive(Debug, Deserialize, Default)]
 pub struct Config {
@@ -43,6 +48,19 @@ pub struct Config {
     pub description: Option<String>,
     /// Homepage URL linked in the footer. Default: `"https://github.com/l5yth/podserv-b"`.
     pub website: Option<String>,
+    /// Public base URL of this server (e.g. `"https://pods.example.com"`).
+    ///
+    /// Used to construct absolute URLs in the RSS feed for audio enclosures and
+    /// cover art. Falls back to [`website`](Config::website) if unset.
+    pub base_url: Option<String>,
+    /// Podcast author / owner name used in `<itunes:author>` and `<managingEditor>`.
+    ///
+    /// Omitted from the RSS feed if not set.
+    pub author: Option<String>,
+    /// BCP 47 language tag for the RSS `<language>` element. Default: `"en"`.
+    pub language: Option<String>,
+    /// Whether the feed contains explicit content (`<itunes:explicit>`). Default: `false`.
+    pub explicit: Option<bool>,
 }
 
 impl Config {
@@ -71,6 +89,27 @@ impl Config {
     /// Returns the configured website URL, or `"https://github.com/l5yth/podserv-b"` if not set.
     pub fn website(&self) -> &str {
         self.website.as_deref().unwrap_or(DEFAULT_WEBSITE)
+    }
+
+    /// Returns the configured base URL for absolute RSS links, falling back to
+    /// [`website`](Config::website) if `base_url` is not set.
+    pub fn base_url(&self) -> &str {
+        self.base_url.as_deref().unwrap_or_else(|| self.website())
+    }
+
+    /// Returns the configured author name, or `""` if not set.
+    pub fn author(&self) -> &str {
+        self.author.as_deref().unwrap_or("")
+    }
+
+    /// Returns the configured language tag, or `"en"` if not set.
+    pub fn language(&self) -> &str {
+        self.language.as_deref().unwrap_or(DEFAULT_LANGUAGE)
+    }
+
+    /// Returns whether the feed is marked explicit. Default: `false`.
+    pub fn explicit(&self) -> bool {
+        self.explicit.unwrap_or(false)
     }
 }
 
@@ -120,6 +159,54 @@ mod tests {
         assert_eq!(cfg.title(), "T");
         assert_eq!(cfg.description(), "D");
         assert_eq!(cfg.website(), "https://w.example");
+    }
+
+    #[test]
+    fn base_url_defaults_to_website() {
+        let cfg = from_toml("");
+        assert_eq!(cfg.base_url(), DEFAULT_WEBSITE);
+    }
+
+    #[test]
+    fn base_url_overrides_website() {
+        let cfg = from_toml(r#"base_url = "https://pods.example.com""#);
+        assert_eq!(cfg.base_url(), "https://pods.example.com");
+    }
+
+    #[test]
+    fn author_defaults_to_empty() {
+        let cfg = from_toml("");
+        assert_eq!(cfg.author(), "");
+    }
+
+    #[test]
+    fn author_override() {
+        let cfg = from_toml(r#"author = "Jane Smith""#);
+        assert_eq!(cfg.author(), "Jane Smith");
+    }
+
+    #[test]
+    fn language_defaults_to_en() {
+        let cfg = from_toml("");
+        assert_eq!(cfg.language(), "en");
+    }
+
+    #[test]
+    fn language_override() {
+        let cfg = from_toml(r#"language = "de""#);
+        assert_eq!(cfg.language(), "de");
+    }
+
+    #[test]
+    fn explicit_defaults_to_false() {
+        let cfg = from_toml("");
+        assert!(!cfg.explicit());
+    }
+
+    #[test]
+    fn explicit_override() {
+        let cfg = from_toml("explicit = true");
+        assert!(cfg.explicit());
     }
 
     #[test]

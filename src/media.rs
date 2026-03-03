@@ -17,6 +17,7 @@
 use id3::{Tag, TagLike};
 use std::fs;
 use std::path::Path;
+use std::time::SystemTime;
 
 /// Metadata for a single MP3 episode.
 #[derive(Debug, Clone)]
@@ -38,6 +39,12 @@ pub struct Episode {
     pub duration: String,
     /// File size in megabytes, formatted to one decimal place.
     pub size_mb: String,
+    /// File size in bytes, from `fs::metadata`. Used for RSS `<enclosure length="…">`.
+    pub size_bytes: u64,
+    /// File modification time, from `fs::metadata`. Used for RSS `<pubDate>`.
+    ///
+    /// `None` if the OS cannot provide the modification time.
+    pub pub_date: Option<SystemTime>,
     /// Embedded cover art as `(mime_type, image_bytes)`.
     ///
     /// Only populated when the ID3 `APIC` frame is present and its MIME type
@@ -153,9 +160,13 @@ fn scan_mp3s_in_dir(dir: &Path, media_dir: &str) -> Vec<Episode> {
             .unwrap_or(&path)
             .to_string_lossy()
             .to_string();
-        let size_mb = fs::metadata(&path)
+        let meta = fs::metadata(&path).ok();
+        let size_mb = meta
+            .as_ref()
             .map(|m| format!("{:.1}", m.len() as f64 / (1024.0 * 1024.0)))
             .unwrap_or_default();
+        let size_bytes = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let pub_date = meta.and_then(|m| m.modified().ok());
 
         let (title, artist, album, year, duration, art) = match Tag::read_from_path(&path) {
             Ok(tag) => {
@@ -196,6 +207,8 @@ fn scan_mp3s_in_dir(dir: &Path, media_dir: &str) -> Vec<Episode> {
             year,
             duration,
             size_mb,
+            size_bytes,
+            pub_date,
             art,
         });
     }
@@ -415,6 +428,24 @@ mod tests {
         fs::write(sub.join("ep.mp3"), b"x").unwrap();
         let eps = scan_mp3s_in_dir(&sub, dir.to_str().unwrap());
         assert_eq!(eps[0].rel_path, "shows/ep.mp3");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn scan_mp3s_size_bytes_nonzero() {
+        let dir = new_temp_dir();
+        fs::write(dir.join("ep.mp3"), b"not mp3 data but has bytes").unwrap();
+        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap());
+        assert!(eps[0].size_bytes > 0);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn scan_mp3s_pub_date_is_set() {
+        let dir = new_temp_dir();
+        fs::write(dir.join("ep.mp3"), b"x").unwrap();
+        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap());
+        assert!(eps[0].pub_date.is_some());
         fs::remove_dir_all(dir).unwrap();
     }
 

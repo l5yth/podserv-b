@@ -285,6 +285,8 @@ mod tests {
             year: year.into(),
             duration: duration.into(),
             size_mb: size_mb.into(),
+            size_bytes: 1024,
+            pub_date: None,
             art: if has_art {
                 Some(("image/jpeg".into(), vec![]))
             } else {
@@ -479,6 +481,8 @@ mod tests {
             year: "".into(),
             duration: "".into(),
             size_mb: "1.0".into(),
+            size_bytes: 1024,
+            pub_date: None,
             art: Some(("image/jpeg\" onload=\"evil()\"".into(), vec![])),
         };
         let sec = section("podcasts", vec![ep]);
