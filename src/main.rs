@@ -26,6 +26,7 @@ use actix_files::Files;
 use actix_governor::{Governor, GovernorConfigBuilder};
 use actix_web::http::header;
 use actix_web::{App, HttpRequest, HttpResponse, HttpServer, get, web};
+use clap::Parser;
 use config::Config;
 use media::{Section, scan_sections};
 use std::collections::HashMap;
@@ -33,6 +34,34 @@ use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Component, Path};
+
+/// Command-line arguments.
+#[derive(Parser)]
+#[command(
+    version = concat!(
+        "v",
+        env!("CARGO_PKG_VERSION"),
+        "\n",
+        env!("CARGO_PKG_DESCRIPTION"),
+        "\napache v2 (c) 2026 l5yth"
+    ),
+    before_help = concat!(
+        "podserv-b v",
+        env!("CARGO_PKG_VERSION"),
+        "\n",
+        env!("CARGO_PKG_DESCRIPTION"),
+        "\napache v2 (c) 2026 l5yth"
+    )
+)]
+struct Cli {
+    /// Directory containing MP3 files to serve.
+    #[arg(long, short = 'm', env = "MEDIA_DIR", default_value = "media")]
+    media: String,
+
+    /// Address to bind the HTTP server to.
+    #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:3000")]
+    bind: String,
+}
 
 /// Pre-rendered index page and its HTTP ETag.
 struct PageCache {
@@ -131,8 +160,9 @@ async fn art(req_path: web::Path<String>, art_map: web::Data<ArtMap>) -> HttpRes
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let media_dir = std::env::var("MEDIA_DIR").unwrap_or_else(|_| "media".into());
-    let bind = std::env::var("BIND").unwrap_or_else(|_| "127.0.0.1:3000".into());
+    let cli = Cli::parse();
+    let media_dir = cli.media;
+    let bind = cli.bind;
 
     let media_path = Path::new(&media_dir);
     if !media_path.exists() {
@@ -152,15 +182,16 @@ async fn main() -> std::io::Result<()> {
     let etag = compute_etag(&html);
     let cache = web::Data::new(PageCache { html, etag });
     let art_map = web::Data::new(build_art_map(&sections));
-    // 60-request burst per IP, then 1 req/s replenishment.
-    // The burst absorbs a full page load + cover-art spray (~20–30 concurrent
-    // image requests); 1 req/s sustains audio streaming (range requests arrive
-    // every several seconds) while stopping a flood after the first bucket.
+    // 512-request burst per IP, then 1 req/s replenishment.
+    // The burst absorbs a full page load + cover-art spray for large libraries
+    // (one request per episode plus browser parallelism headroom); 1 req/s
+    // sustains audio streaming (range requests arrive every several seconds)
+    // while stopping a flood after the first bucket.
     // Built outside the closure so all worker threads share the same
     // Arc-backed RateLimiter state.
     let governor_conf = GovernorConfigBuilder::default()
         .seconds_per_request(1)
-        .burst_size(60)
+        .burst_size(512)
         .finish()
         .unwrap();
 
@@ -201,6 +232,58 @@ mod tests {
                 None
             },
         }
+    }
+
+    // --- Cli ---
+    //
+    // Tests that read or write MEDIA_DIR/BIND must hold ENV_LOCK for their
+    // entire duration so they do not race with each other or with pre-existing
+    // values in the process environment.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn cli_defaults() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: ENV_LOCK serialises all env-var access in this test module.
+        unsafe {
+            std::env::remove_var("MEDIA_DIR");
+            std::env::remove_var("BIND");
+        }
+        let cli = Cli::try_parse_from(["podserv-b"]).unwrap();
+        assert_eq!(cli.media, "media");
+        assert_eq!(cli.bind, "127.0.0.1:3000");
+    }
+
+    #[test]
+    fn cli_custom_args() {
+        let cli = Cli::try_parse_from(["podserv-b", "--media", "/data", "--bind", "0.0.0.0:8080"])
+            .unwrap();
+        assert_eq!(cli.media, "/data");
+        assert_eq!(cli.bind, "0.0.0.0:8080");
+    }
+
+    #[test]
+    fn cli_env_var_fallback() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: ENV_LOCK serialises all env-var access in this test module.
+        unsafe {
+            std::env::set_var("MEDIA_DIR", "/env/media");
+            std::env::set_var("BIND", "0.0.0.0:9090");
+        }
+        let cli = Cli::try_parse_from(["podserv-b"]).unwrap();
+        unsafe {
+            std::env::remove_var("MEDIA_DIR");
+            std::env::remove_var("BIND");
+        }
+        assert_eq!(cli.media, "/env/media");
+        assert_eq!(cli.bind, "0.0.0.0:9090");
+    }
+
+    #[test]
+    fn cli_short_aliases() {
+        let cli = Cli::try_parse_from(["podserv-b", "-m", "/data", "-b", "0.0.0.0:8080"]).unwrap();
+        assert_eq!(cli.media, "/data");
+        assert_eq!(cli.bind, "0.0.0.0:8080");
     }
 
     // --- compute_etag ---
