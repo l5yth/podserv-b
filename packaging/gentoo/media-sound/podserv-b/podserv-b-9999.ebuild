@@ -45,14 +45,17 @@ src_install() {
 	insinto /etc
 	newins "${S}/Config.toml" podserv-b.toml.example
 
-	# Media directory owned by the service user.
+	# Media directory — ownership is set in pkg_postinst once the user exists.
 	keepdir /srv/podcasts
-	fowners podserv-b:podserv-b /srv/podcasts
 
 	use systemd && systemd_dounit "${S}/packaging/systemd/podserv-b.service"
 }
 
 pkg_postinst() {
+	# pkg_preinst has already created the podserv-b user; the directory has
+	# been merged from ${D} by this point, so chown can resolve the username.
+	chown podserv-b:podserv-b "${EROOT}/srv/podcasts"
+
 	if [[ ! -e "${EROOT}/etc/podserv-b.toml" ]]; then
 		elog "No config file found. Copy the example to get started:"
 		elog "  cp /etc/podserv-b.toml.example /etc/podserv-b.toml"
