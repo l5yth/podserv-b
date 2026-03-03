@@ -124,6 +124,8 @@ impl KeyExtractor for RealIpKeyExtractor {
         // Trust X-Real-IP only for connections from localhost (our nginx).
         // Covers both IPv4 (127.0.0.1) and IPv6 (::1) loopback addresses.
         // Direct connections (tests, standalone mode) use peer IP as-is.
+        // A missing or unparseable X-Real-IP (e.g. a hostname) is silently
+        // ignored and falls back to peer IP rather than returning an error.
         if (peer == IpAddr::from([127, 0, 0, 1])
             || peer == IpAddr::V6(std::net::Ipv6Addr::LOCALHOST))
             && let Some(real_ip) = req

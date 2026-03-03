@@ -112,7 +112,7 @@ pub fn render_page(config: &Config, sections: &[Section]) -> String {
                 format!(
                     r#"<link rel="icon" type="{}" href="/art/{}">"#,
                     html_escape(mime),
-                    enc
+                    html_escape(&enc)
                 )
             })
         })
@@ -465,6 +465,26 @@ mod tests {
         assert!(html.contains(r#"<link rel="icon" type="image/jpeg" href="/art/a-shows/b.mp3">"#));
         // z-shows/a.mp3 appears in the episode row <img> but NOT as the favicon href.
         assert!(!html.contains(r#"<link rel="icon" type="image/jpeg" href="/art/z-shows/a.mp3">"#));
+    }
+
+    #[test]
+    fn render_favicon_mime_is_html_escaped() {
+        // Regression test for MIME-type XSS: a crafted MIME value with quotes
+        // must be escaped and must not appear unescaped in the output.
+        let ep = Episode {
+            rel_path: "a.mp3".into(),
+            title: "T".into(),
+            artist: "".into(),
+            album: "".into(),
+            year: "".into(),
+            duration: "".into(),
+            size_mb: "1.0".into(),
+            art: Some(("image/jpeg\" onload=\"evil()\"".into(), vec![])),
+        };
+        let sec = section("podcasts", vec![ep]);
+        let html = render_page(&default_config(), &[sec]);
+        assert!(html.contains("image/jpeg&quot; onload=&quot;evil()&quot;"));
+        assert!(!html.contains("onload=\"evil()\""));
     }
 
     // --- render_page: sections ---
