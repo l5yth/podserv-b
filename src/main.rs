@@ -62,6 +62,11 @@ fn build_art_map(sections: &[Section]) -> ArtMap {
 }
 
 /// Computes a quoted ETag value from the given string content.
+///
+/// Uses [`DefaultHasher`], whose output is stable only within a single process
+/// run. That is sufficient here: ETags only need to match within a client
+/// session, and the page is re-rendered (and a fresh ETag computed) on every
+/// server restart anyway.
 fn compute_etag(s: &str) -> String {
     let mut h = DefaultHasher::new();
     s.hash(&mut h);
@@ -347,6 +352,26 @@ mod tests {
             .to_str()
             .unwrap();
         assert!(cc.contains("max-age=86400"));
+    }
+
+    #[actix_web::test]
+    async fn art_returns_correct_content_type() {
+        let mut map = ArtMap::new();
+        map.insert(
+            "art.mp3".to_string(),
+            ("image/jpeg".to_string(), vec![0xFF, 0xD8, 0xFF]),
+        );
+        let app =
+            aw_test::init_service(App::new().app_data(web::Data::new(map)).service(art)).await;
+        let req = aw_test::TestRequest::get().uri("/art/art.mp3").to_request();
+        let resp = aw_test::call_service(&app, req).await;
+        let ct = resp
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(ct, "image/jpeg");
     }
 
     #[actix_web::test]
