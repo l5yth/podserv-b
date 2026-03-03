@@ -23,7 +23,7 @@ mod media;
 mod render;
 
 use actix_files::Files;
-use actix_governor::{Governor, GovernorConfigBuilder};
+use actix_governor::{Governor, GovernorConfigBuilder, KeyExtractor, SimpleKeyExtractionError};
 use actix_web::http::header;
 use actix_web::{App, HttpRequest, HttpResponse, HttpServer, get, web};
 use clap::Parser;
@@ -33,6 +33,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
+use std::net::IpAddr;
 use std::path::{Component, Path};
 
 /// Command-line arguments.
@@ -97,6 +98,42 @@ fn build_art_map(sections: &[Section]) -> ArtMap {
                 .map(|(mime, data)| (e.rel_path.clone(), (mime.clone(), data.clone())))
         })
         .collect()
+}
+
+/// Rate-limiting key extractor that uses the real client IP address.
+///
+/// When the TCP peer is `127.0.0.1` (i.e. the nginx reverse proxy), reads the
+/// `X-Real-IP` header that nginx sets to `$remote_addr`. Otherwise falls back
+/// to the TCP peer address. This gives correct per-client rate limiting both
+/// when running behind nginx and when accessed directly (e.g. in tests).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RealIpKeyExtractor;
+
+impl KeyExtractor for RealIpKeyExtractor {
+    type Key = IpAddr;
+    type KeyExtractionError = SimpleKeyExtractionError<&'static str>;
+
+    fn extract(
+        &self,
+        req: &actix_web::dev::ServiceRequest,
+    ) -> Result<Self::Key, Self::KeyExtractionError> {
+        let peer = req
+            .peer_addr()
+            .map(|s| s.ip())
+            .ok_or(SimpleKeyExtractionError::new("no peer address"))?;
+        // Trust X-Real-IP only for connections from localhost (our nginx).
+        // Direct connections (tests, standalone mode) use peer IP as-is.
+        if peer == IpAddr::from([127, 0, 0, 1])
+            && let Some(real_ip) = req
+                .headers()
+                .get("X-Real-IP")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<IpAddr>().ok())
+        {
+            return Ok(real_ip);
+        }
+        Ok(peer)
+    }
 }
 
 /// Computes a quoted ETag value from the given string content.
@@ -199,6 +236,7 @@ async fn main() -> std::io::Result<()> {
     // Built outside the closure so all worker threads share the same
     // Arc-backed RateLimiter state.
     let governor_conf = GovernorConfigBuilder::default()
+        .key_extractor(RealIpKeyExtractor)
         .seconds_per_request(1)
         .burst_size(512)
         .finish()
@@ -548,5 +586,37 @@ mod tests {
             aw_test::call_service(&app, req).await.status().as_u16(),
             429
         );
+    }
+
+    // --- RealIpKeyExtractor ---
+
+    #[test]
+    fn real_ip_extractor_uses_x_real_ip_when_peer_is_localhost() {
+        let req = aw_test::TestRequest::get()
+            .peer_addr("127.0.0.1:1234".parse().unwrap())
+            .insert_header(("X-Real-IP", "203.0.113.42"))
+            .to_srv_request();
+        let key = RealIpKeyExtractor.extract(&req).unwrap();
+        assert_eq!(key, "203.0.113.42".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn real_ip_extractor_falls_back_to_peer_when_no_header() {
+        let req = aw_test::TestRequest::get()
+            .peer_addr("127.0.0.1:1234".parse().unwrap())
+            .to_srv_request();
+        let key = RealIpKeyExtractor.extract(&req).unwrap();
+        assert_eq!(key, "127.0.0.1".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn real_ip_extractor_ignores_x_real_ip_for_non_localhost_peer() {
+        // A direct (non-proxy) connection must not trust a client-supplied X-Real-IP.
+        let req = aw_test::TestRequest::get()
+            .peer_addr("10.0.0.1:5678".parse().unwrap())
+            .insert_header(("X-Real-IP", "1.2.3.4"))
+            .to_srv_request();
+        let key = RealIpKeyExtractor.extract(&req).unwrap();
+        assert_eq!(key, "10.0.0.1".parse::<IpAddr>().unwrap());
     }
 }

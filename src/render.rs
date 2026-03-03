@@ -102,6 +102,18 @@ pub fn render_page(config: &Config, sections: &[Section]) -> String {
     let desc_esc = html_escape(config.description());
     let website_esc = html_escape(config.website());
 
+    // First episode (alphabetically) that has embedded art → favicon.
+    let favicon_tag = sections
+        .iter()
+        .flat_map(|s| s.episodes.iter())
+        .find(|e| e.art.is_some())
+        .map(|e| {
+            let (mime, _) = e.art.as_ref().unwrap();
+            let enc = url_encode_path(&e.rel_path);
+            format!(r#"<link rel="icon" type="{mime}" href="/art/{enc}">"#)
+        })
+        .unwrap_or_default();
+
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -109,7 +121,7 @@ pub fn render_page(config: &Config, sections: &[Section]) -> String {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title_esc}</title>
-<style>
+{favicon_tag}<style>
 *{{margin:0;padding:0;box-sizing:border-box}}
 body{{font-family:monospace;background:#111;color:#ccc;padding:1rem 1rem 5rem;max-width:640px;margin:0 auto}}
 header{{border-bottom:1px solid #333;padding-bottom:.6rem;margin-bottom:1rem}}
@@ -196,6 +208,7 @@ audio.addEventListener('ended',()=>{{if(cur<total-1)play(cur+1);}});
         has_art_json = has_art_json,
         total = total,
         version = env!("CARGO_PKG_VERSION"),
+        favicon_tag = favicon_tag,
     )
 }
 
@@ -403,6 +416,50 @@ mod tests {
     fn render_header_uses_default_title_when_unset() {
         let html = render_page(&default_config(), &[]);
         assert!(html.contains("<h1>podserv-b</h1>"));
+    }
+
+    // --- render_page: favicon ---
+
+    #[test]
+    fn render_favicon_absent_when_no_sections() {
+        let html = render_page(&default_config(), &[]);
+        assert!(!html.contains(r#"rel="icon""#));
+    }
+
+    #[test]
+    fn render_favicon_absent_when_no_episode_has_art() {
+        let sec = section(
+            "podcasts",
+            vec![
+                make_ep("a.mp3", "A", "", "", "", "", "1.0", false),
+                make_ep("b.mp3", "B", "", "", "", "", "1.0", false),
+            ],
+        );
+        let html = render_page(&default_config(), &[sec]);
+        assert!(!html.contains(r#"rel="icon""#));
+    }
+
+    #[test]
+    fn render_favicon_uses_first_alphabetical_episode_with_art() {
+        // "a-shows" section comes first alphabetically; "b.mp3" has art within it.
+        // "z-shows" section has art at "a.mp3" but comes after.
+        // Expect the favicon to point to a-shows/b.mp3.
+        let sec_a = section(
+            "a-shows",
+            vec![
+                make_ep("a-shows/a.mp3", "A", "", "", "", "", "1.0", false),
+                make_ep("a-shows/b.mp3", "B", "", "", "", "", "1.0", true),
+            ],
+        );
+        let sec_z = section(
+            "z-shows",
+            vec![make_ep("z-shows/a.mp3", "Z", "", "", "", "", "1.0", true)],
+        );
+        let html = render_page(&default_config(), &[sec_a, sec_z]);
+        // The favicon link must point to the first alphabetical episode with art.
+        assert!(html.contains(r#"<link rel="icon" type="image/jpeg" href="/art/a-shows/b.mp3">"#));
+        // z-shows/a.mp3 appears in the episode row <img> but NOT as the favicon href.
+        assert!(!html.contains(r#"<link rel="icon" type="image/jpeg" href="/art/z-shows/a.mp3">"#));
     }
 
     // --- render_page: sections ---
