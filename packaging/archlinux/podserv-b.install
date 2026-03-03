@@ -12,5 +12,14 @@ post_install() {
 }
 
 post_upgrade() {
-  post_install
+  getent group  podserv-b &>/dev/null || groupadd --system podserv-b
+  getent passwd podserv-b &>/dev/null || \
+    useradd --system --gid podserv-b --home-dir /srv/podcasts \
+            --shell /sbin/nologin podserv-b
+  systemctl daemon-reload
+}
+
+post_remove() {
+  userdel  podserv-b 2>/dev/null || true
+  groupdel podserv-b 2>/dev/null || true
 }

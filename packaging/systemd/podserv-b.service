@@ -30,6 +30,10 @@ LockPersonality=true
 RestrictRealtime=true
 RestrictNamespaces=true
 SystemCallArchitectures=native
+CapabilityBoundingSet=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectClock=true
 
 [Install]
 WantedBy=multi-user.target

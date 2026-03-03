@@ -28,7 +28,12 @@ or
 to deploy as a systemd service (packages handle the user/dir automatically):
 
 ```sh
-cp /etc/podserv-b.toml.example /etc/podserv-b.toml  # edit to taste
+# if installed via a linux package:
+cp /etc/podserv-b.toml.example /etc/podserv-b.toml
+
+# if installed via cargo install, create /etc/podserv-b.toml manually —
+# all fields are optional, see the configuration section below for the schema.
+
 systemctl enable --now podserv-b
 ```
 
