@@ -39,7 +39,7 @@ CI runs `cargo check`, `cargo fmt --check`, `cargo test`, `cargo clippy`, and `c
 The entire application currently lives in `src/main.rs`. New code should be extracted into separate modules rather than added to this file.
 
 **Startup flow:**
-1. Parse `--media` and `--bind` CLI flags (defaults: `"media"`, `"127.0.0.1:3000"`).
+1. Parse `--media`/`-m` and `--bind`/`-b` CLI flags (also accepted via `MEDIA_DIR`/`BIND` env vars; defaults: `"media"`, `"127.0.0.1:3000"`).
 2. `scan_media()` reads all `.mp3` files from the directory, extracts ID3 tags (title, artist, album, year, duration) and file size into `Vec<Episode>`.
 3. Episodes are loaded once at startup and stored in `web::Data<Vec<Episode>>` — the server does **not** hot-reload when files change.
 4. `HttpServer` mounts `GET /` → `index` handler and `GET /media/<file>` via `actix_files::Files`.

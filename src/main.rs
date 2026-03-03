@@ -182,15 +182,16 @@ async fn main() -> std::io::Result<()> {
     let etag = compute_etag(&html);
     let cache = web::Data::new(PageCache { html, etag });
     let art_map = web::Data::new(build_art_map(&sections));
-    // 60-request burst per IP, then 1 req/s replenishment.
-    // The burst absorbs a full page load + cover-art spray (~20–30 concurrent
-    // image requests); 1 req/s sustains audio streaming (range requests arrive
-    // every several seconds) while stopping a flood after the first bucket.
+    // 512-request burst per IP, then 1 req/s replenishment.
+    // The burst absorbs a full page load + cover-art spray for large libraries
+    // (one request per episode plus browser parallelism headroom); 1 req/s
+    // sustains audio streaming (range requests arrive every several seconds)
+    // while stopping a flood after the first bucket.
     // Built outside the closure so all worker threads share the same
     // Arc-backed RateLimiter state.
     let governor_conf = GovernorConfigBuilder::default()
         .seconds_per_request(1)
-        .burst_size(60)
+        .burst_size(512)
         .finish()
         .unwrap();
 
@@ -234,9 +235,20 @@ mod tests {
     }
 
     // --- Cli ---
+    //
+    // Tests that read or write MEDIA_DIR/BIND must hold ENV_LOCK for their
+    // entire duration so they do not race with each other or with pre-existing
+    // values in the process environment.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn cli_defaults() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: ENV_LOCK serialises all env-var access in this test module.
+        unsafe {
+            std::env::remove_var("MEDIA_DIR");
+            std::env::remove_var("BIND");
+        }
         let cli = Cli::try_parse_from(["podserv-b"]).unwrap();
         assert_eq!(cli.media, "media");
         assert_eq!(cli.bind, "127.0.0.1:3000");
@@ -252,7 +264,8 @@ mod tests {
 
     #[test]
     fn cli_env_var_fallback() {
-        // SAFETY: single-threaded test process; no other thread reads these vars.
+        let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: ENV_LOCK serialises all env-var access in this test module.
         unsafe {
             std::env::set_var("MEDIA_DIR", "/env/media");
             std::env::set_var("BIND", "0.0.0.0:9090");

@@ -39,8 +39,8 @@ Command-line arguments
 Usage: podserv-b [OPTIONS]
 
 Options:
-  -m, --media <MEDIA>  Directory containing MP3 files to serve [default: media]
-  -b, --bind <BIND>    Address to bind the HTTP server to [default: 127.0.0.1:3000]
+  -m, --media <MEDIA>  Directory containing MP3 files to serve [env: MEDIA_DIR=] [default: media]
+  -b, --bind <BIND>    Address to bind the HTTP server to [env: BIND=] [default: 127.0.0.1:3000]
   -h, --help           Print help
   -V, --version        Print version
 ```
