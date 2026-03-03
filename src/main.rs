@@ -68,7 +68,7 @@ struct Cli {
     media: String,
 
     /// Address to bind the HTTP server to.
-    #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:3000")]
+    #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:8447")]
     bind: String,
 }
 
@@ -262,7 +262,7 @@ mod tests {
         let cli = Cli::try_parse_from(["podserv-b"]).unwrap();
         assert_eq!(cli.config, "/etc/podserv-b.toml");
         assert_eq!(cli.media, "media");
-        assert_eq!(cli.bind, "127.0.0.1:3000");
+        assert_eq!(cli.bind, "127.0.0.1:8447");
     }
 
     #[test]

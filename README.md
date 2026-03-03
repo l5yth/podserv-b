@@ -39,7 +39,7 @@ systemctl enable --now podserv-b
 
 ## usage
 
-`podserv-b` binds to `127.0.0.1:3000` and serves mp3 files in `./media` by default
+`podserv-b` binds to `127.0.0.1:8447` and serves mp3 files in `./media` by default
 
 ```sh
 podserv-b v0.1.1
@@ -53,7 +53,7 @@ Usage: podserv-b [OPTIONS]
 Options:
   -c, --config <CONFIG>  Path to the TOML configuration file [env: CONFIG=] [default: /etc/podserv-b.toml]
   -m, --media <MEDIA>    Directory containing MP3 files to serve [env: MEDIA_DIR=] [default: media]
-  -b, --bind <BIND>      Address to bind the HTTP server to [env: BIND=] [default: 127.0.0.1:3000]
+  -b, --bind <BIND>      Address to bind the HTTP server to [env: BIND=] [default: 127.0.0.1:8447]
   -h, --help             Print help
   -V, --version          Print version
 ```
