@@ -14,7 +14,7 @@ Group=podserv-b
 ExecStart=/usr/bin/podserv-b \
     --config /etc/podserv-b.toml \
     --media  /srv/podcasts       \
-    --bind   127.0.0.1:3000
+    --bind   127.0.0.1:8447
 
 Restart=on-failure
 RestartSec=5

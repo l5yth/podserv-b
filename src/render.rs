@@ -145,7 +145,7 @@ footer a:hover{{color:#aaa}}
 <p class="desc">{desc_esc}</p>
 </header>
 <main>{sections_html}</main>
-<footer><a href="{website_esc}">{website_esc}</a> &middot; powered by <a href="https://github.com/l5yth/podserv-b">podserv-b</a></footer>
+<footer><a href="{website_esc}">{website_esc}</a> &middot; powered by <a href="https://github.com/l5yth/podserv-b">podserv-b</a> (v{version})</footer>
 <div id="player-bar">
   <div id="player-inner">
     <div id="player-art"></div>
@@ -195,6 +195,7 @@ audio.addEventListener('ended',()=>{{if(cur<total-1)play(cur+1);}});
         artists_json = artists_json,
         has_art_json = has_art_json,
         total = total,
+        version = env!("CARGO_PKG_VERSION"),
     )
 }
 
@@ -395,6 +396,7 @@ mod tests {
         let html = render_page(&default_config(), &[]);
         assert!(html.contains("powered by"));
         assert!(html.contains(r#"href="https://github.com/l5yth/podserv-b">podserv-b</a>"#));
+        assert!(html.contains(&format!("(v{})", env!("CARGO_PKG_VERSION"))));
     }
 
     #[test]
