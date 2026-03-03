@@ -3,7 +3,7 @@
 
 EAPI=8
 
-inherit cargo git-r3
+inherit cargo git-r3 systemd
 
 DESCRIPTION="a minimalist podcast server (type b) for serving media files on the web"
 HOMEPAGE="https://github.com/l5yth/podserv-b"
@@ -12,7 +12,7 @@ EGIT_REPO_URI="https://github.com/l5yth/podserv-b.git"
 LICENSE="Apache-2.0"
 SLOT="0"
 KEYWORDS=""
-IUSE=""
+IUSE="systemd"
 PROPERTIES="live"
 
 BDEPEND="
@@ -32,7 +32,22 @@ src_test() {
 	cargo_src_test
 }
 
+pkg_preinst() {
+	enewgroup podserv-b
+	enewuser podserv-b -1 -1 /srv/podcasts podserv-b
+}
+
 src_install() {
 	cargo_src_install
 	einstalldocs
+
+	# Default config — kept as a template; admin edits in place.
+	insinto /etc
+	newins "${S}/Config.toml" podserv-b.toml
+
+	# Media directory owned by the service user.
+	keepdir /srv/podcasts
+	fowners podserv-b:podserv-b /srv/podcasts
+
+	use systemd && systemd_dounit "${S}/packaging/systemd/podserv-b.service"
 }

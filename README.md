@@ -25,6 +25,17 @@ for linux packages see [archlinux/PKGBUILD](./packaging/archlinux/PKGBUILD)
 or
 [gentoo/podserv-b-9999.ebuild](./packaging/gentoo/media-sound/podserv-b/podserv-b-9999.ebuild)
 
+to deploy a systemd unit:
+
+```sh
+# create user once (the linux packages post_install do this automatically)
+useradd --system --home /srv/podcasts --shell /sbin/nologin podserv-b
+chown podserv-b:podserv-b /srv/podcasts
+
+# drop your mp3s in /srv/podcasts, edit /etc/podserv-b.toml, then:
+systemctl enable --now podserv-b
+```
+
 ## usage
 
 `podserv-b` binds to `127.0.0.1:3000` and serves mp3 files in `./media` by default
