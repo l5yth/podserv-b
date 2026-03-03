@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE pkgmetadata SYSTEM "https://www.gentoo.org/dtd/metadata.dtd">
+<pkgmetadata>
+  <maintainer type="person">
+    <email>ebuild@l5y.tech</email>
+    <name>l5yth</name>
+  </maintainer>
+  <upstream>
+    <homepage>https://github.com/l5yth/podserv-b</homepage>
+    <remote-id type="github">l5yth/podserv-b</remote-id>
+  </upstream>
+  <longdescription>
+    podserv-b is a minimalist podcast server (type b) for serving media files on the web.
+  </longdescription>
+</pkgmetadata>

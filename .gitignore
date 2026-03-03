@@ -3,6 +3,13 @@
 
 /target
 
+# Packaging build artifacts
+/packaging/archlinux/*.pkg.tar.*
+/packaging/archlinux/src/
+/packaging/archlinux/pkg/
+/packaging/archlinux/podserv-b/
+/packaging/gentoo/**/files/
+
 # Media files
 media/**/*.mp3
 
