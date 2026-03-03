@@ -1,8 +1,12 @@
+# Copyright (c) 2026 l5yth
+# SPDX-License-Identifier: Apache-2.0
+
 [package]
 name = "podserv-b"
 version = "0.1.0"
 edition = "2024"
 description = "a minimalist podcast server (type b) for serving media files on the web"
+license = "Apache-2.0"
 repository = "https://github.com/l5yth/podserv-b"
 
 [dependencies]
