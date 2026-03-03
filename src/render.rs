@@ -106,11 +106,15 @@ pub fn render_page(config: &Config, sections: &[Section]) -> String {
     let favicon_tag = sections
         .iter()
         .flat_map(|s| s.episodes.iter())
-        .find(|e| e.art.is_some())
-        .map(|e| {
-            let (mime, _) = e.art.as_ref().unwrap();
-            let enc = url_encode_path(&e.rel_path);
-            format!(r#"<link rel="icon" type="{mime}" href="/art/{enc}">"#)
+        .find_map(|e| {
+            e.art.as_ref().map(|(mime, _)| {
+                let enc = url_encode_path(&e.rel_path);
+                format!(
+                    r#"<link rel="icon" type="{}" href="/art/{}">"#,
+                    html_escape(mime),
+                    enc
+                )
+            })
         })
         .unwrap_or_default();
 
@@ -121,7 +125,8 @@ pub fn render_page(config: &Config, sections: &[Section]) -> String {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title_esc}</title>
-{favicon_tag}<style>
+{favicon_tag}
+<style>
 *{{margin:0;padding:0;box-sizing:border-box}}
 body{{font-family:monospace;background:#111;color:#ccc;padding:1rem 1rem 5rem;max-width:640px;margin:0 auto}}
 header{{border-bottom:1px solid #333;padding-bottom:.6rem;margin-bottom:1rem}}

@@ -122,8 +122,10 @@ impl KeyExtractor for RealIpKeyExtractor {
             .map(|s| s.ip())
             .ok_or(SimpleKeyExtractionError::new("no peer address"))?;
         // Trust X-Real-IP only for connections from localhost (our nginx).
+        // Covers both IPv4 (127.0.0.1) and IPv6 (::1) loopback addresses.
         // Direct connections (tests, standalone mode) use peer IP as-is.
-        if peer == IpAddr::from([127, 0, 0, 1])
+        if (peer == IpAddr::from([127, 0, 0, 1])
+            || peer == IpAddr::V6(std::net::Ipv6Addr::LOCALHOST))
             && let Some(real_ip) = req
                 .headers()
                 .get("X-Real-IP")
@@ -618,5 +620,15 @@ mod tests {
             .to_srv_request();
         let key = RealIpKeyExtractor.extract(&req).unwrap();
         assert_eq!(key, "10.0.0.1".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn real_ip_extractor_uses_x_real_ip_when_peer_is_ipv6_localhost() {
+        let req = aw_test::TestRequest::get()
+            .peer_addr("[::1]:1234".parse().unwrap())
+            .insert_header(("X-Real-IP", "203.0.113.42"))
+            .to_srv_request();
+        let key = RealIpKeyExtractor.extract(&req).unwrap();
+        assert_eq!(key, "203.0.113.42".parse::<IpAddr>().unwrap());
     }
 }
