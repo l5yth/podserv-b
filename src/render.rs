@@ -162,7 +162,7 @@ footer a:hover{{color:#aaa}}
 <p class="desc">{desc_esc}</p>
 </header>
 <main>{sections_html}</main>
-<footer><a href="{website_esc}">{website_esc}</a> &middot; powered by <a href="https://github.com/l5yth/podserv-b">podserv-b</a> (v{version})</footer>
+<footer><a href="{website_esc}">{website_esc}</a> &middot; <a href="/rss" title="RSS feed"><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" style="vertical-align:middle;fill:currentColor"><circle cx="5" cy="19" r="3"/><path d="M4 4a16 16 0 0 1 16 16h-3A13 13 0 0 0 4 7z"/><path d="M4 11a9 9 0 0 1 9 9H10a6 6 0 0 0-6-6z"/></svg> RSS</a> &middot; powered by <a href="https://github.com/l5yth/podserv-b">podserv-b</a> (v{version})</footer>
 <div id="player-bar">
   <div id="player-inner">
     <div id="player-art"></div>
@@ -285,6 +285,8 @@ mod tests {
             year: year.into(),
             duration: duration.into(),
             size_mb: size_mb.into(),
+            size_bytes: 1024,
+            pub_date: None,
             art: if has_art {
                 Some(("image/jpeg".into(), vec![]))
             } else {
@@ -418,6 +420,13 @@ mod tests {
     }
 
     #[test]
+    fn render_footer_contains_rss_link() {
+        let html = render_page(&default_config(), &[]);
+        assert!(html.contains(r#"href="/rss""#));
+        assert!(html.contains("RSS"));
+    }
+
+    #[test]
     fn render_header_uses_default_title_when_unset() {
         let html = render_page(&default_config(), &[]);
         assert!(html.contains("<h1>podserv-b</h1>"));
@@ -479,6 +488,8 @@ mod tests {
             year: "".into(),
             duration: "".into(),
             size_mb: "1.0".into(),
+            size_bytes: 1024,
+            pub_date: None,
             art: Some(("image/jpeg\" onload=\"evil()\"".into(), vec![])),
         };
         let sec = section("podcasts", vec![ep]);

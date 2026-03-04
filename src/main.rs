@@ -21,6 +21,7 @@
 mod config;
 mod media;
 mod render;
+mod rss;
 
 use actix_files::Files;
 use actix_governor::{Governor, GovernorConfigBuilder, KeyExtractor, SimpleKeyExtractionError};
@@ -77,6 +78,14 @@ struct Cli {
 struct PageCache {
     /// Complete HTML document returned by `GET /`.
     html: String,
+    /// Quoted ETag value (`"<hash>"`) for HTTP conditional-GET support.
+    etag: String,
+}
+
+/// Pre-rendered RSS feed and its HTTP ETag.
+struct RssCache {
+    /// Complete RSS 2.0 + iTunes XML document returned by `GET /rss`.
+    xml: String,
     /// Quoted ETag value (`"<hash>"`) for HTTP conditional-GET support.
     etag: String,
 }
@@ -208,6 +217,25 @@ async fn art(req_path: web::Path<String>, art_map: web::Data<ArtMap>) -> HttpRes
     }
 }
 
+/// Serves the pre-rendered RSS 2.0 + iTunes podcast feed.
+///
+/// Returns `304 Not Modified` when the client's `If-None-Match` header
+/// matches the current ETag, otherwise returns the full XML with `ETag`
+/// and `Cache-Control: no-cache` headers.
+#[get("/rss")]
+async fn rss_feed(cache: web::Data<RssCache>, req: HttpRequest) -> HttpResponse {
+    if let Some(inm) = req.headers().get(header::IF_NONE_MATCH)
+        && inm.as_bytes() == cache.etag.as_bytes()
+    {
+        return HttpResponse::NotModified().finish();
+    }
+    HttpResponse::Ok()
+        .content_type("application/rss+xml; charset=utf-8")
+        .insert_header((header::ETAG, cache.etag.as_str()))
+        .insert_header((header::CACHE_CONTROL, "no-cache"))
+        .body(cache.xml.clone())
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
@@ -231,6 +259,14 @@ async fn main() -> std::io::Result<()> {
     let html = render::render_page(&config, &sections);
     let etag = compute_etag(&html);
     let cache = web::Data::new(PageCache { html, etag });
+
+    let rss_xml = rss::render_rss(&config, &sections);
+    let rss_etag = compute_etag(&rss_xml);
+    let rss_cache = web::Data::new(RssCache {
+        xml: rss_xml,
+        etag: rss_etag,
+    });
+
     let art_map = web::Data::new(build_art_map(&sections));
     // 512-request burst per IP, then 1 req/s replenishment.
     // The burst absorbs a full page load + cover-art spray for large libraries
@@ -250,8 +286,10 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .wrap(Governor::new(&governor_conf))
             .app_data(cache.clone())
+            .app_data(rss_cache.clone())
             .app_data(art_map.clone())
             .service(index)
+            .service(rss_feed)
             .service(art)
             // actix-files handles path-traversal sanitisation for /media/.
             .service(Files::new("/media", &media_dir))
@@ -277,6 +315,8 @@ mod tests {
             year: "".into(),
             duration: "".into(),
             size_mb: "1.0".into(),
+            size_bytes: 1024,
+            pub_date: None,
             art: if has_art {
                 Some(("image/jpeg".into(), vec![0xFF]))
             } else {
@@ -632,5 +672,59 @@ mod tests {
             .to_srv_request();
         let key = RealIpKeyExtractor.extract(&req).unwrap();
         assert_eq!(key, "203.0.113.42".parse::<IpAddr>().unwrap());
+    }
+
+    // --- rss_feed handler ---
+
+    #[actix_web::test]
+    async fn rss_returns_200_with_xml_content_type() {
+        let xml = rss::render_rss(&Config::default(), &[]);
+        let etag = compute_etag(&xml);
+        let cache = web::Data::new(RssCache { xml, etag });
+        let app = aw_test::init_service(App::new().app_data(cache).service(rss_feed)).await;
+        let req = aw_test::TestRequest::get().uri("/rss").to_request();
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 200);
+        let ct = resp
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(ct, "application/rss+xml; charset=utf-8");
+    }
+
+    #[actix_web::test]
+    async fn rss_returns_304_on_matching_etag() {
+        let xml = rss::render_rss(&Config::default(), &[]);
+        let etag = compute_etag(&xml);
+        let cache = web::Data::new(RssCache {
+            xml,
+            etag: etag.clone(),
+        });
+        let app = aw_test::init_service(App::new().app_data(cache).service(rss_feed)).await;
+        let req = aw_test::TestRequest::get()
+            .uri("/rss")
+            .insert_header((header::IF_NONE_MATCH, etag))
+            .to_request();
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 304);
+    }
+
+    #[actix_web::test]
+    async fn rss_returns_cache_control_no_cache() {
+        let xml = rss::render_rss(&Config::default(), &[]);
+        let etag = compute_etag(&xml);
+        let cache = web::Data::new(RssCache { xml, etag });
+        let app = aw_test::init_service(App::new().app_data(cache).service(rss_feed)).await;
+        let req = aw_test::TestRequest::get().uri("/rss").to_request();
+        let resp = aw_test::call_service(&app, req).await;
+        let cc = resp
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(cc, "no-cache");
     }
 }
