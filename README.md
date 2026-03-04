@@ -67,7 +67,21 @@ the config file is a TOML file read at startup. pass its path with `-c` / `--con
 title       = "My Podserv B"
 description = "Station for Podcast Lovers, Listeners, and Dogs"
 website     = "https://example-b.com"
+
+# RSS feed fields
+base_url    = "https://pods.example-b.com"  # absolute URL prefix for enclosure links
+author      = "Jane Smith"                  # <itunes:author> / <managingEditor>
+language    = "en"                          # BCP 47 language tag
+explicit    = false                         # <itunes:explicit>
 ```
 
 all fields are optional; defaults are used when the file is absent.
 
+### endpoints
+
+| route | description |
+|---|---|
+| `GET /` | episode browser (HTML) |
+| `GET /rss` | RSS 2.0 + iTunes podcast feed (XML) |
+| `GET /media/<file>` | audio file with range-request support |
+| `GET /art/<file>` | embedded cover art |

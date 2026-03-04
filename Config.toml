@@ -7,3 +7,16 @@
 # title = "podserv-b"
 # description = "a minimalist podcast server (type b) for serving media files on the web"
 # website = "https://github.com/l5yth/podserv-b"
+
+# Public base URL of this server. Used to build absolute URLs in the RSS feed
+# (enclosures, cover art). Falls back to 'website' if unset.
+# base_url = "https://pods.example.com"
+
+# Podcast author shown in <itunes:author> and <managingEditor>. Omitted if unset.
+# author = "Jane Smith"
+
+# BCP 47 language tag for the RSS <language> element.
+# language = "en"
+
+# Set to true if the feed contains explicit content.
+# explicit = false

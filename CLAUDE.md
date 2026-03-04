@@ -36,19 +36,29 @@ CI runs `cargo check`, `cargo fmt --check`, `cargo test`, `cargo clippy`, and `c
 
 ## Architecture
 
-The entire application currently lives in `src/main.rs`. New code should be extracted into separate modules rather than added to this file.
+Modules under `src/`:
+- `config.rs` — TOML site config (`title`, `description`, `website`, `base_url`, `author`, `language`, `explicit`)
+- `media.rs` — scans MP3s up to 2 dirs deep into `Vec<Section>`; `Episode` holds ID3 tags, `size_bytes`, `pub_date`, and optional cover art
+- `render.rs` — pure string HTML renderer (`render_page`), `html_escape`, `url_encode_path`
+- `rss.rs` — RSS 2.0 + iTunes feed renderer (`render_rss`), `xml_escape`, `format_pub_date`
+- `main.rs` — startup wiring only: `PageCache`, `RssCache`, `ArtMap`, `RealIpKeyExtractor`, handlers, `HttpServer`
 
 **Startup flow:**
-1. Parse `--media`/`-m` and `--bind`/`-b` CLI flags (also accepted via `MEDIA_DIR`/`BIND` env vars; defaults: `"media"`, `"127.0.0.1:8447"`).
-2. `scan_media()` reads all `.mp3` files from the directory, extracts ID3 tags (title, artist, album, year, duration) and file size into `Vec<Episode>`.
-3. Episodes are loaded once at startup and stored in `web::Data<Vec<Episode>>` — the server does **not** hot-reload when files change.
-4. `HttpServer` mounts `GET /` → `index` handler and `GET /media/<file>` via `actix_files::Files`.
+1. Parse `--config`/`-c`, `--media`/`-m`, `--bind`/`-b` CLI flags (also `CONFIG`, `MEDIA_DIR`, `BIND` env vars).
+2. `Config::load()` reads the TOML config file (defaults used if absent).
+3. `scan_sections()` reads all `.mp3` files from the media directory (up to 2 levels deep), extracting ID3 tags, file size, modification time, and cover art into `Vec<Section>`.
+4. `render_page()` and `render_rss()` are called once to pre-render both responses into `PageCache` and `RssCache` (with ETags).
+5. Cover art is extracted into an in-memory `ArtMap` (`HashMap<rel_path, (mime, bytes)>`).
+6. `HttpServer` mounts all handlers; episodes are never re-scanned without a restart.
 
 **Request handling:**
-- `GET /` calls `render_page()`, which generates a complete HTML page as a `String` containing inline CSS, the episode list as HTML rows, and inline JavaScript with the filenames and titles serialized as JSON arrays. Audio playback is handled entirely client-side; clicking an episode sets `<audio>.src` to `/media/<filename>` and auto-advances on `ended`.
-- `GET /media/<filename>` is served directly by `actix-files` with range-request support (needed for seek).
+- `GET /` — serves `PageCache` HTML with ETag / 304 support.
+- `GET /rss` — serves `RssCache` XML (`application/rss+xml`) with ETag / 304 support.
+- `GET /art/<path>` — serves cover art from the in-memory `ArtMap`; `Cache-Control: max-age=86400, immutable`.
+- `GET /media/<file>` — served by `actix-files` with range-request support (needed for seek).
 
 **Key design constraints:**
-- Episode metadata is scanned once at startup; restart required to pick up new files.
-- HTML escaping is done manually via `html_escape()` — not a template engine.
-- The `Episode` struct is `Serialize` but currently only used for JSON serialization of filenames/titles inside the rendered page (not exposed as an API endpoint).
+- All responses are pre-rendered at startup; restart required to pick up new files or config changes.
+- HTML/XML escaping done manually — no template engine.
+- Only `image/*` MIME types are stored in `ArtMap` to prevent Content-Type injection.
+- Rate limiting via `actix-governor` with `RealIpKeyExtractor` (reads `X-Real-IP` from loopback peers for correct per-client limiting behind nginx).
