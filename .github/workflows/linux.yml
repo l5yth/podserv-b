@@ -80,3 +80,15 @@ jobs:
           EBUILD=/var/db/repos/localrepo/media-sound/podserv-b/podserv-b-9999.ebuild
           ebuild "${EBUILD}" manifest
           ebuild "${EBUILD}" clean fetch unpack configure compile test install
+
+  nix:
+    runs-on: ubuntu-latest
+    container:
+      image: nixos/nix:latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build
+        run: nix --extra-experimental-features "nix-command flakes" build
