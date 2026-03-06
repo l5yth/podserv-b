@@ -247,7 +247,7 @@ pub(crate) fn parse_date_from_filename(stem: &str) -> Option<SystemTime> {
     let b = stem.as_bytes();
     let n = b.len();
 
-    // Pass 1: YYYY-MM-DD or YYYY_MM_DD
+    // Pass 1: YYYY-MM-DD or YYYY_MM_DD (pattern is 10 bytes; last valid i = n-10)
     for i in 0..n.saturating_sub(9) {
         let sep = b[i + 4];
         if (sep == b'-' || sep == b'_')
@@ -265,7 +265,7 @@ pub(crate) fn parse_date_from_filename(stem: &str) -> Option<SystemTime> {
         }
     }
 
-    // Pass 2: YYYYMMDD (non-digit boundaries required on both sides)
+    // Pass 2: YYYYMMDD (pattern is 8 bytes; last valid i = n-8)
     for i in 0..n.saturating_sub(7) {
         if b[i..i + 8].iter().all(u8::is_ascii_digit)
             && (i == 0 || !b[i - 1].is_ascii_digit())
@@ -311,7 +311,12 @@ fn date_to_unix_secs(year: u32, month: u32, day: u32) -> Option<u64> {
         days += dim;
     }
     days += (day - 1) as u64;
-    Some(days * 86400)
+    let secs = days * 86400;
+    // Reject the Unix epoch itself (1970-01-01); it is not a meaningful date.
+    if secs == 0 {
+        return None;
+    }
+    Some(secs)
 }
 
 /// Returns `true` if `year` is a leap year in the proleptic Gregorian calendar.
@@ -361,8 +366,14 @@ mod tests {
     // --- date_to_unix_secs ---
 
     #[test]
-    fn date_to_unix_secs_epoch() {
-        assert_eq!(date_to_unix_secs(1970, 1, 1), Some(0));
+    fn date_to_unix_secs_epoch_returns_none() {
+        // 1970-01-01 is the Unix epoch — not a meaningful podcast date.
+        assert!(date_to_unix_secs(1970, 1, 1).is_none());
+    }
+
+    #[test]
+    fn date_to_unix_secs_day_after_epoch_is_valid() {
+        assert!(date_to_unix_secs(1970, 1, 2).is_some());
     }
 
     #[test]
@@ -464,6 +475,25 @@ mod tests {
         assert!(parse_date_from_filename("2024-01-32").is_none());
     }
 
+    #[test]
+    fn parse_date_compact_yyyymmdd_at_end_of_string() {
+        assert_eq!(
+            parse_date_from_filename("episode-20240115"),
+            Some(t(2024, 1, 15))
+        );
+    }
+
+    #[test]
+    fn parse_date_single_zero_returns_none() {
+        assert!(parse_date_from_filename("0").is_none());
+    }
+
+    #[test]
+    fn parse_date_dot_separated_returns_none() {
+        // "1.1.1970" uses dots, not a recognised separator
+        assert!(parse_date_from_filename("1.1.1970").is_none());
+    }
+
     // --- sorted_subdirs ---
 
     #[test]
@@ -530,7 +560,10 @@ mod tests {
     fn scan_mp3s_case_insensitive_extension() {
         let dir = new_temp_dir();
         fs::write(dir.join("track.MP3"), b"x").unwrap();
-        assert_eq!(scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false).len(), 1);
+        assert_eq!(
+            scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false).len(),
+            1
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 
