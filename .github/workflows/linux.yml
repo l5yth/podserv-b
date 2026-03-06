@@ -92,8 +92,9 @@ jobs:
 
       - name: Checkout
         run: |
-          git clone "https://github.com/${{ github.repository }}.git" /build
-          git -C /build checkout "${{ github.sha }}"
+          git init /build
+          git -C /build fetch "https://github.com/${{ github.repository }}.git" "${{ github.ref }}"
+          git -C /build checkout FETCH_HEAD
 
       - name: Build
         working-directory: /build
