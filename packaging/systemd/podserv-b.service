@@ -11,6 +11,7 @@ Type=simple
 User=podserv-b
 Group=podserv-b
 
+# To parse dates from filenames (YYYY-MM-DD etc.) as pubDate, append --file-to-meta.
 ExecStart=/usr/bin/podserv-b \
     --config /etc/podserv-b.toml \
     --media  /srv/podcasts       \
