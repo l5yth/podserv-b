@@ -72,6 +72,13 @@ struct Cli {
     /// Address to bind the HTTP server to.
     #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:8447")]
     bind: String,
+
+    /// When set, attempt to parse a date from the episode filename
+    /// (patterns: `YYYY-MM-DD`, `YYYY_MM_DD`, `YYYYMMDD`) and use it as the
+    /// publication date, falling back to the file modification time if no
+    /// date pattern is found.
+    #[arg(long, env = "FILE_TO_META")]
+    file_to_meta: bool,
 }
 
 /// Pre-rendered index page and its HTTP ETag.
@@ -249,7 +256,7 @@ async fn main() -> std::io::Result<()> {
     }
 
     let config = Config::load(&cli.config);
-    let sections = scan_sections(&media_dir);
+    let sections = scan_sections(&media_dir, cli.file_to_meta);
     let total: usize = sections.iter().map(|s| s.episodes.len()).sum();
     eprintln!(
         "{total} episode(s) in {} section(s) — listening on http://{bind}",
@@ -345,6 +352,7 @@ mod tests {
         assert_eq!(cli.config, "/etc/podserv-b.toml");
         assert_eq!(cli.media, "media");
         assert_eq!(cli.bind, "127.0.0.1:8447");
+        assert!(!cli.file_to_meta);
     }
 
     #[test]
@@ -382,6 +390,12 @@ mod tests {
         assert_eq!(cli.config, "/tmp/env.toml");
         assert_eq!(cli.media, "/env/media");
         assert_eq!(cli.bind, "0.0.0.0:9090");
+    }
+
+    #[test]
+    fn cli_file_to_meta_flag() {
+        let cli = Cli::try_parse_from(["podserv-b", "--file-to-meta"]).unwrap();
+        assert!(cli.file_to_meta);
     }
 
     #[test]
