@@ -58,15 +58,33 @@ use std::path::{Component, Path, PathBuf};
 )]
 struct Cli {
     /// Path to the TOML configuration file.
-    #[arg(long, short = 'c', env = "CONFIG", hide_env = true, default_value = "/etc/podserv-b.toml")]
+    #[arg(
+        long,
+        short = 'c',
+        env = "CONFIG",
+        hide_env = true,
+        default_value = "/etc/podserv-b.toml"
+    )]
     config: String,
 
     /// Directory containing MP3 files to serve.
-    #[arg(long, short = 'm', env = "MEDIA_DIR", hide_env = true, default_value = "media")]
+    #[arg(
+        long,
+        short = 'm',
+        env = "MEDIA_DIR",
+        hide_env = true,
+        default_value = "media"
+    )]
     media: String,
 
     /// Address to bind the HTTP server to.
-    #[arg(long, short = 'b', env = "BIND", hide_env = true, default_value = "127.0.0.1:8447")]
+    #[arg(
+        long,
+        short = 'b',
+        env = "BIND",
+        hide_env = true,
+        default_value = "127.0.0.1:8447"
+    )]
     bind: String,
 
     /// When set, attempt to parse a date from the episode filename
@@ -302,11 +320,21 @@ async fn serve_media(
 #[get("/listens")]
 async fn listens_ep(store: web::Data<ListenStore>) -> HttpResponse {
     // Serialising HashMap<String, u64> is infallible.
-    let json = serde_json::to_string(&store.snapshot())
-        .expect("listen count serialisation is infallible");
+    let json =
+        serde_json::to_string(&store.snapshot()).expect("listen count serialisation is infallible");
     HttpResponse::Ok()
         .content_type("application/json")
         .body(json)
+}
+
+/// Resolves the path of the listens JSON file.
+///
+/// Returns the explicit path when `--listens` is provided, or defaults to
+/// `listens.json` inside `media_dir`.
+fn resolve_listens_path(explicit: Option<String>, media_dir: &str) -> PathBuf {
+    explicit
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(media_dir).join("listens.json"))
 }
 
 #[actix_web::main]
@@ -341,11 +369,10 @@ async fn main() -> std::io::Result<()> {
     });
 
     let art_map = web::Data::new(build_art_map(&sections));
-    let listens_path = cli
-        .listens
-        .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(&media_dir).join("listens.json"));
-    let store = web::Data::new(ListenStore::load(listens_path));
+    let store = web::Data::new(ListenStore::load(resolve_listens_path(
+        cli.listens,
+        &media_dir,
+    )));
     let media = web::Data::new(MediaDir(media_dir.clone()));
 
     // 512-request burst per IP, then 1 req/s replenishment.
@@ -846,6 +873,57 @@ mod tests {
             .to_str()
             .unwrap();
         assert_eq!(cc, "no-cache");
+    }
+
+    // --- resolve_listens_path ---
+
+    #[test]
+    fn resolve_listens_path_defaults_to_media_dir() {
+        let path = resolve_listens_path(None, "/srv/pods");
+        assert_eq!(path, PathBuf::from("/srv/pods/listens.json"));
+    }
+
+    #[test]
+    fn resolve_listens_path_uses_explicit_when_set() {
+        let path = resolve_listens_path(Some("/tmp/custom.json".into()), "/srv/pods");
+        assert_eq!(path, PathBuf::from("/tmp/custom.json"));
+    }
+
+    // --- full app wiring (covers app_data + service registrations in main) ---
+
+    #[actix_web::test]
+    async fn full_app_wiring_serves_index() {
+        let (store, _path) = temp_store();
+        let dir = new_temp_dir();
+        let html = render::render_page(&Config::default(), &[]);
+        let etag = compute_etag(&html);
+        let cache = web::Data::new(PageCache { html, etag });
+        let xml = rss::render_rss(&Config::default(), &[]);
+        let rss_etag = compute_etag(&xml);
+        let rss_cache = web::Data::new(RssCache {
+            xml,
+            etag: rss_etag,
+        });
+        let art_map = web::Data::new(ArtMap::new());
+        let media = web::Data::new(MediaDir(dir.to_str().unwrap().into()));
+        let app = aw_test::init_service(
+            App::new()
+                .app_data(cache)
+                .app_data(rss_cache)
+                .app_data(art_map)
+                .app_data(store)
+                .app_data(media)
+                .service(index)
+                .service(rss_feed)
+                .service(art)
+                .service(serve_media)
+                .service(listens_ep),
+        )
+        .await;
+        let req = aw_test::TestRequest::get().uri("/").to_request();
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 200);
+        std::fs::remove_dir_all(dir).ok();
     }
 
     // --- serve_media handler ---

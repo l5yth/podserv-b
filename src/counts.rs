@@ -77,8 +77,7 @@ impl ListenStore {
     fn persist(&self, counts: &HashMap<String, u64>) {
         let json = serde_json::to_string(counts).expect("counts serialisation is infallible");
         let tmp = self.file.with_extension("tmp");
-        let result =
-            std::fs::write(&tmp, &json).and_then(|()| std::fs::rename(&tmp, &self.file));
+        let result = std::fs::write(&tmp, &json).and_then(|()| std::fs::rename(&tmp, &self.file));
         if let Err(e) = result {
             eprintln!("counts: persist error ({}): {e}", self.file.display());
         }
