@@ -16,3 +16,8 @@ media/**/*.mp3
 # Local config overrides
 Config.toml
 
+# Listen-count data files
+counts.json
+listens.json
+*.tmp
+

@@ -58,20 +58,15 @@ use std::path::{Component, Path, PathBuf};
 )]
 struct Cli {
     /// Path to the TOML configuration file.
-    #[arg(
-        long,
-        short = 'c',
-        env = "CONFIG",
-        default_value = "/etc/podserv-b.toml"
-    )]
+    #[arg(long, short = 'c', env = "CONFIG", hide_env = true, default_value = "/etc/podserv-b.toml")]
     config: String,
 
     /// Directory containing MP3 files to serve.
-    #[arg(long, short = 'm', env = "MEDIA_DIR", default_value = "media")]
+    #[arg(long, short = 'm', env = "MEDIA_DIR", hide_env = true, default_value = "media")]
     media: String,
 
     /// Address to bind the HTTP server to.
-    #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:8447")]
+    #[arg(long, short = 'b', env = "BIND", hide_env = true, default_value = "127.0.0.1:8447")]
     bind: String,
 
     /// When set, attempt to parse a date from the episode filename
@@ -81,10 +76,8 @@ struct Cli {
     #[arg(long, env = "FILE_TO_META")]
     file_to_meta: bool,
 
-    /// Path to the JSON file used to persist listen counts.
-    ///
-    /// Defaults to `listens.json` inside the media directory when not set.
-    #[arg(long, env = "LISTENS_FILE")]
+    /// Path to the JSON file used to persist listen counts. Defaults to `listens.json` inside the media directory.
+    #[arg(long, env = "LISTENS_FILE", hide_env = true)]
     listens: Option<String>,
 }
 
@@ -302,15 +295,18 @@ async fn serve_media(
 /// The response body is a JSON object mapping each episode's relative path
 /// to its listen count, e.g. `{"shows/ep1.mp3": 42}`. The page's JavaScript
 /// fetches this endpoint on load to display per-episode listen counts.
+///
+/// Named `listens_ep` (not `listens`) to avoid a name collision: the
+/// `#[get]` macro generates a struct with the same name as the function,
+/// which would clash with the `listens` field on [`Cli`].
 #[get("/listens")]
 async fn listens_ep(store: web::Data<ListenStore>) -> HttpResponse {
-    let snap = store.snapshot();
-    match serde_json::to_string(&snap) {
-        Ok(json) => HttpResponse::Ok()
-            .content_type("application/json")
-            .body(json),
-        Err(_) => HttpResponse::InternalServerError().finish(),
-    }
+    // Serialising HashMap<String, u64> is infallible.
+    let json = serde_json::to_string(&store.snapshot())
+        .expect("listen count serialisation is infallible");
+    HttpResponse::Ok()
+        .content_type("application/json")
+        .body(json)
 }
 
 #[actix_web::main]

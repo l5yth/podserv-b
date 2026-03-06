@@ -796,10 +796,10 @@ mod tests {
     }
 
     #[test]
-    fn render_page_counts_fetch_updates_ep_meta() {
+    fn render_page_listens_fetch_updates_ep_meta() {
         let html = render_page(&default_config(), &[]);
-        // The JS must reference .ep-meta and the listen label.
-        assert!(html.contains("ep-meta"));
-        assert!(html.contains("listen"));
+        // The JS must look up ep-meta and use the singular/plural listen label.
+        assert!(html.contains("querySelector('.ep-meta')"));
+        assert!(html.contains("'listen':'listens'"));
     }
 }
