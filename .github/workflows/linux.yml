@@ -87,8 +87,15 @@ jobs:
       image: nixos/nix:latest
 
     steps:
+      - name: Enable flakes
+        run: echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf
+
       - name: Checkout
-        uses: actions/checkout@v6
+        run: |
+          nix-env -iA nixpkgs.git
+          git clone "https://github.com/${{ github.repository }}.git" /build
+          git -C /build checkout "${{ github.sha }}"
 
       - name: Build
-        run: nix --extra-experimental-features "nix-command flakes" build
+        working-directory: /build
+        run: nix build
