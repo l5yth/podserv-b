@@ -80,3 +80,22 @@ jobs:
           EBUILD=/var/db/repos/localrepo/media-sound/podserv-b/podserv-b-9999.ebuild
           ebuild "${EBUILD}" manifest
           ebuild "${EBUILD}" clean fetch unpack configure compile test install
+
+  nix:
+    runs-on: ubuntu-latest
+    container:
+      image: nixos/nix:latest
+
+    steps:
+      - name: Enable flakes
+        run: echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf
+
+      - name: Checkout
+        run: |
+          git init /build
+          git -C /build fetch "https://github.com/${{ github.repository }}.git" "${{ github.ref }}"
+          git -C /build checkout FETCH_HEAD
+
+      - name: Build
+        working-directory: /build
+        run: nix build --no-update-lock-file

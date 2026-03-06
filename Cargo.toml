@@ -3,7 +3,7 @@
 
 [package]
 name = "podserv-b"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "a minimalist podcast server (type b) for serving media files on the web"
 license = "Apache-2.0"
