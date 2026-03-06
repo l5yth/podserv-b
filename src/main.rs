@@ -19,23 +19,24 @@
 //! into memory. All state is shared immutably across requests.
 
 mod config;
+mod counts;
 mod media;
 mod render;
 mod rss;
 
-use actix_files::Files;
 use actix_governor::{Governor, GovernorConfigBuilder, KeyExtractor, SimpleKeyExtractionError};
 use actix_web::http::header;
 use actix_web::{App, HttpRequest, HttpResponse, HttpServer, get, web};
 use clap::Parser;
 use config::Config;
+use counts::ListenStore;
 use media::{Section, scan_sections};
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::net::IpAddr;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 /// Command-line arguments.
 #[derive(Parser)]
@@ -61,16 +62,29 @@ struct Cli {
         long,
         short = 'c',
         env = "CONFIG",
+        hide_env = true,
         default_value = "/etc/podserv-b.toml"
     )]
     config: String,
 
     /// Directory containing MP3 files to serve.
-    #[arg(long, short = 'm', env = "MEDIA_DIR", default_value = "media")]
+    #[arg(
+        long,
+        short = 'm',
+        env = "MEDIA_DIR",
+        hide_env = true,
+        default_value = "media"
+    )]
     media: String,
 
     /// Address to bind the HTTP server to.
-    #[arg(long, short = 'b', env = "BIND", default_value = "127.0.0.1:8447")]
+    #[arg(
+        long,
+        short = 'b',
+        env = "BIND",
+        hide_env = true,
+        default_value = "127.0.0.1:8447"
+    )]
     bind: String,
 
     /// When set, attempt to parse a date from the episode filename
@@ -79,6 +93,11 @@ struct Cli {
     /// date pattern is found.
     #[arg(long, env = "FILE_TO_META")]
     file_to_meta: bool,
+
+    /// Path to the JSON file used to persist listen counts.
+    /// Defaults to `/var/lib/podserv-b/listens.json`.
+    #[arg(long, env = "LISTENS_FILE", hide_env = true)]
+    listens: Option<String>,
 }
 
 /// Pre-rendered index page and its HTTP ETag.
@@ -102,6 +121,12 @@ struct RssCache {
 /// Values are `(mime_type, image_bytes)`. Only `image/*` MIME types are
 /// included; all entries were validated at startup in [`media::scan_sections`].
 type ArtMap = HashMap<String, (String, Vec<u8>)>;
+
+/// Root directory from which media files are served.
+///
+/// Wrapped in a newtype so it can be stored as [`actix_web::web::Data`]
+/// without conflicting with any other `web::Data<String>` in the app.
+struct MediaDir(String);
 
 /// Builds an [`ArtMap`] from pre-scanned section data.
 fn build_art_map(sections: &[Section]) -> ArtMap {
@@ -204,8 +229,7 @@ async fn index(cache: web::Data<PageCache>, req: HttpRequest) -> HttpResponse {
 /// real traversal risk — the guard is retained to make the intent explicit and
 /// to stay safe if the implementation ever changes.
 ///
-/// The `/media/` route (served by `actix-files`) has its own independent
-/// traversal protection built into that crate.
+/// The `/media/` route has its own independent traversal check.
 #[get("/art/{path:.*}")]
 async fn art(req_path: web::Path<String>, art_map: web::Data<ArtMap>) -> HttpResponse {
     let rel = req_path.as_str();
@@ -243,6 +267,78 @@ async fn rss_feed(cache: web::Data<RssCache>, req: HttpRequest) -> HttpResponse 
         .body(cache.xml.clone())
 }
 
+/// Serves a media file and counts the listen.
+///
+/// Only counts requests that are not mid-stream range requests — i.e. when
+/// the `Range` header is absent or starts with `bytes=0-` (indicating the
+/// start of a new play). Seeking within an already-playing file sends
+/// range requests with a non-zero start, which are served but not counted.
+///
+/// Returns `400` if the path contains `..` or leading `/` components.
+/// Returns `404` if the file does not exist or cannot be opened.
+/// Range requests, ETags, and `Last-Modified` are handled by
+/// [`actix_files::NamedFile`].
+#[get("/media/{path:.*}")]
+async fn serve_media(
+    req_path: web::Path<String>,
+    media_dir: web::Data<MediaDir>,
+    store: web::Data<ListenStore>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let rel = req_path.as_str();
+    if Path::new(rel)
+        .components()
+        .any(|c| c == Component::ParentDir || c == Component::RootDir)
+    {
+        return HttpResponse::BadRequest().finish();
+    }
+    let full_path = Path::new(&media_dir.0).join(rel);
+    let named = match actix_files::NamedFile::open(&full_path) {
+        Ok(f) => f,
+        Err(_) => return HttpResponse::NotFound().finish(),
+    };
+    // Count only initial play requests, not mid-stream seeking range requests.
+    let is_initial = req
+        .headers()
+        .get(header::RANGE)
+        .map(|v| v.as_bytes().starts_with(b"bytes=0-"))
+        .unwrap_or(true);
+    if is_initial {
+        store.increment(rel);
+    }
+    named.into_response(&req)
+}
+
+/// Returns all current listen counts as a JSON object.
+///
+/// The response body is a JSON object mapping each episode's relative path
+/// to its listen count, e.g. `{"shows/ep1.mp3": 42}`. The page's JavaScript
+/// fetches this endpoint on load to display per-episode listen counts.
+///
+/// Named `listens_ep` (not `listens`) to avoid a name collision: the
+/// `#[get]` macro generates a struct with the same name as the function,
+/// which would clash with the `listens` field on [`Cli`].
+#[get("/listens")]
+async fn listens_ep(store: web::Data<ListenStore>) -> HttpResponse {
+    // Serialising HashMap<String, u64> is infallible.
+    let json =
+        serde_json::to_string(&store.snapshot()).expect("listen count serialisation is infallible");
+    HttpResponse::Ok()
+        .content_type("application/json")
+        .body(json)
+}
+
+/// Resolves the path of the listens JSON file.
+///
+/// Returns the explicit path when `--listens` is provided, or defaults to
+/// `/var/lib/podserv-b/listens.json` — the FHS state directory created by
+/// the systemd `StateDirectory=podserv-b` directive.
+fn resolve_listens_path(explicit: Option<String>) -> PathBuf {
+    explicit
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/var/lib/podserv-b/listens.json"))
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
@@ -275,6 +371,9 @@ async fn main() -> std::io::Result<()> {
     });
 
     let art_map = web::Data::new(build_art_map(&sections));
+    let store = web::Data::new(ListenStore::load(resolve_listens_path(cli.listens)));
+    let media = web::Data::new(MediaDir(media_dir.clone()));
+
     // 512-request burst per IP, then 1 req/s replenishment.
     // The burst absorbs a full page load + cover-art spray for large libraries
     // (one request per episode plus browser parallelism headroom); 1 req/s
@@ -295,11 +394,13 @@ async fn main() -> std::io::Result<()> {
             .app_data(cache.clone())
             .app_data(rss_cache.clone())
             .app_data(art_map.clone())
+            .app_data(store.clone())
+            .app_data(media.clone())
             .service(index)
             .service(rss_feed)
             .service(art)
-            // actix-files handles path-traversal sanitisation for /media/.
-            .service(Files::new("/media", &media_dir))
+            .service(serve_media)
+            .service(listens_ep)
     })
     .bind(&bind)?
     .run()
@@ -312,6 +413,9 @@ mod tests {
     use actix_web::App;
     use actix_web::test as aw_test;
     use media::Episode;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn make_ep(rel_path: &str, has_art: bool) -> Episode {
         Episode {
@@ -332,6 +436,36 @@ mod tests {
         }
     }
 
+    /// Creates a temporary directory with a unique name for each test call.
+    fn new_temp_dir() -> PathBuf {
+        let n = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("podserv_main_test_{n}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// RAII guard that deletes the wrapped path (and its `.tmp` sibling) on drop.
+    struct TempFile(PathBuf);
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+            let _ = std::fs::remove_file(self.0.with_extension("tmp"));
+        }
+    }
+
+    /// Creates a [`ListenStore`] backed by a fresh temp file.
+    ///
+    /// Returns the store and a [`TempFile`] guard; the guard must be kept alive
+    /// for the duration of the test and will delete the file on drop.
+    fn temp_store() -> (web::Data<ListenStore>, TempFile) {
+        let n = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("podserv_store_test_{n}.json"));
+        let _ = std::fs::remove_file(&path); // start clean even after a failed run
+        let store = web::Data::new(ListenStore::load(path.clone()));
+        (store, TempFile(path))
+    }
+
     // --- Cli ---
     //
     // Tests that read or write MEDIA_DIR/BIND/CONFIG must hold ENV_LOCK for
@@ -347,12 +481,14 @@ mod tests {
             std::env::remove_var("CONFIG");
             std::env::remove_var("MEDIA_DIR");
             std::env::remove_var("BIND");
+            std::env::remove_var("LISTENS_FILE");
         }
         let cli = Cli::try_parse_from(["podserv-b"]).unwrap();
         assert_eq!(cli.config, "/etc/podserv-b.toml");
         assert_eq!(cli.media, "media");
         assert_eq!(cli.bind, "127.0.0.1:8447");
         assert!(!cli.file_to_meta);
+        assert!(cli.listens.is_none());
     }
 
     #[test]
@@ -365,11 +501,14 @@ mod tests {
             "/data",
             "--bind",
             "0.0.0.0:8080",
+            "--listens",
+            "/tmp/listens.json",
         ])
         .unwrap();
         assert_eq!(cli.config, "/tmp/my.toml");
         assert_eq!(cli.media, "/data");
         assert_eq!(cli.bind, "0.0.0.0:8080");
+        assert_eq!(cli.listens.as_deref(), Some("/tmp/listens.json"));
     }
 
     #[test]
@@ -380,16 +519,19 @@ mod tests {
             std::env::set_var("CONFIG", "/tmp/env.toml");
             std::env::set_var("MEDIA_DIR", "/env/media");
             std::env::set_var("BIND", "0.0.0.0:9090");
+            std::env::set_var("LISTENS_FILE", "/tmp/env_listens.json");
         }
         let cli = Cli::try_parse_from(["podserv-b"]).unwrap();
         unsafe {
             std::env::remove_var("CONFIG");
             std::env::remove_var("MEDIA_DIR");
             std::env::remove_var("BIND");
+            std::env::remove_var("LISTENS_FILE");
         }
         assert_eq!(cli.config, "/tmp/env.toml");
         assert_eq!(cli.media, "/env/media");
         assert_eq!(cli.bind, "0.0.0.0:9090");
+        assert_eq!(cli.listens.as_deref(), Some("/tmp/env_listens.json"));
     }
 
     #[test]
@@ -740,5 +882,226 @@ mod tests {
             .to_str()
             .unwrap();
         assert_eq!(cc, "no-cache");
+    }
+
+    // --- resolve_listens_path ---
+
+    #[test]
+    fn resolve_listens_path_defaults_to_var_lib() {
+        let path = resolve_listens_path(None);
+        assert_eq!(path, PathBuf::from("/var/lib/podserv-b/listens.json"));
+    }
+
+    #[test]
+    fn resolve_listens_path_uses_explicit_when_set() {
+        let path = resolve_listens_path(Some("/tmp/custom.json".into()));
+        assert_eq!(path, PathBuf::from("/tmp/custom.json"));
+    }
+
+    // --- full app wiring (covers app_data + service registrations in main) ---
+
+    #[actix_web::test]
+    async fn full_app_wiring_serves_index() {
+        let (store, _path) = temp_store();
+        let dir = new_temp_dir();
+        let html = render::render_page(&Config::default(), &[]);
+        let etag = compute_etag(&html);
+        let cache = web::Data::new(PageCache { html, etag });
+        let xml = rss::render_rss(&Config::default(), &[]);
+        let rss_etag = compute_etag(&xml);
+        let rss_cache = web::Data::new(RssCache {
+            xml,
+            etag: rss_etag,
+        });
+        let art_map = web::Data::new(ArtMap::new());
+        let media = web::Data::new(MediaDir(dir.to_str().unwrap().into()));
+        let app = aw_test::init_service(
+            App::new()
+                .app_data(cache)
+                .app_data(rss_cache)
+                .app_data(art_map)
+                .app_data(store)
+                .app_data(media)
+                .service(index)
+                .service(rss_feed)
+                .service(art)
+                .service(serve_media)
+                .service(listens_ep),
+        )
+        .await;
+        let req = aw_test::TestRequest::get().uri("/").to_request();
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 200);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    // --- serve_media handler ---
+
+    #[actix_web::test]
+    async fn serve_media_returns_400_on_path_traversal() {
+        let (store, _path) = temp_store();
+        let media = web::Data::new(MediaDir("/tmp".into()));
+        let app = aw_test::init_service(
+            App::new()
+                .app_data(store)
+                .app_data(media)
+                .service(serve_media),
+        )
+        .await;
+        let req = aw_test::TestRequest::get()
+            .uri("/media/..%2F..%2Fetc%2Fpasswd")
+            .to_request();
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 400);
+    }
+
+    #[actix_web::test]
+    async fn serve_media_returns_404_for_missing_file() {
+        let (store, _path) = temp_store();
+        let dir = new_temp_dir();
+        let media = web::Data::new(MediaDir(dir.to_str().unwrap().into()));
+        let app = aw_test::init_service(
+            App::new()
+                .app_data(store)
+                .app_data(media)
+                .service(serve_media),
+        )
+        .await;
+        let req = aw_test::TestRequest::get()
+            .uri("/media/nonexistent.mp3")
+            .to_request();
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 404);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[actix_web::test]
+    async fn serve_media_returns_200_for_existing_file() {
+        let (store, _path) = temp_store();
+        let dir = new_temp_dir();
+        std::fs::write(dir.join("ep.mp3"), b"audio data").unwrap();
+        let media = web::Data::new(MediaDir(dir.to_str().unwrap().into()));
+        let app = aw_test::init_service(
+            App::new()
+                .app_data(store)
+                .app_data(media)
+                .service(serve_media),
+        )
+        .await;
+        let req = aw_test::TestRequest::get()
+            .uri("/media/ep.mp3")
+            .to_request();
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 200);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[actix_web::test]
+    async fn serve_media_increments_count_on_no_range_header() {
+        let (store, _path) = temp_store();
+        let dir = new_temp_dir();
+        std::fs::write(dir.join("ep.mp3"), b"audio data").unwrap();
+        let media = web::Data::new(MediaDir(dir.to_str().unwrap().into()));
+        let app = aw_test::init_service(
+            App::new()
+                .app_data(store.clone())
+                .app_data(media)
+                .service(serve_media),
+        )
+        .await;
+        let req = aw_test::TestRequest::get()
+            .uri("/media/ep.mp3")
+            .to_request();
+        aw_test::call_service(&app, req).await;
+        assert_eq!(store.snapshot()["ep.mp3"], 1);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[actix_web::test]
+    async fn serve_media_increments_count_on_range_from_zero() {
+        let (store, _path) = temp_store();
+        let dir = new_temp_dir();
+        std::fs::write(dir.join("ep.mp3"), b"audio data bytes for range test").unwrap();
+        let media = web::Data::new(MediaDir(dir.to_str().unwrap().into()));
+        let app = aw_test::init_service(
+            App::new()
+                .app_data(store.clone())
+                .app_data(media)
+                .service(serve_media),
+        )
+        .await;
+        let req = aw_test::TestRequest::get()
+            .uri("/media/ep.mp3")
+            .insert_header((header::RANGE, "bytes=0-100"))
+            .to_request();
+        aw_test::call_service(&app, req).await;
+        assert_eq!(store.snapshot()["ep.mp3"], 1);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[actix_web::test]
+    async fn serve_media_no_increment_on_mid_stream_range_request() {
+        let (store, _path) = temp_store();
+        let dir = new_temp_dir();
+        std::fs::write(dir.join("ep.mp3"), b"audio data bytes for range test").unwrap();
+        let media = web::Data::new(MediaDir(dir.to_str().unwrap().into()));
+        let app = aw_test::init_service(
+            App::new()
+                .app_data(store.clone())
+                .app_data(media)
+                .service(serve_media),
+        )
+        .await;
+        let req = aw_test::TestRequest::get()
+            .uri("/media/ep.mp3")
+            .insert_header((header::RANGE, "bytes=100-200"))
+            .to_request();
+        aw_test::call_service(&app, req).await;
+        assert!(!store.snapshot().contains_key("ep.mp3"));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    // --- listens handler ---
+
+    #[actix_web::test]
+    async fn listens_returns_200_with_json_content_type() {
+        let (store, _path) = temp_store();
+        let app = aw_test::init_service(App::new().app_data(store).service(listens_ep)).await;
+        let req = aw_test::TestRequest::get().uri("/listens").to_request();
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 200);
+        let ct = resp
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(ct, "application/json");
+    }
+
+    #[actix_web::test]
+    async fn listens_returns_empty_object_when_no_plays() {
+        let (store, _path) = temp_store();
+        let app = aw_test::init_service(App::new().app_data(store).service(listens_ep)).await;
+        let req = aw_test::TestRequest::get().uri("/listens").to_request();
+        let resp = aw_test::call_service(&app, req).await;
+        let body = aw_test::read_body(resp).await;
+        let map: HashMap<String, u64> = serde_json::from_slice(&body).unwrap();
+        assert!(map.is_empty());
+    }
+
+    #[actix_web::test]
+    async fn listens_reflects_incremented_counts() {
+        let (store, _path) = temp_store();
+        store.increment("ep.mp3");
+        store.increment("ep.mp3");
+        store.increment("other.mp3");
+        let app = aw_test::init_service(App::new().app_data(store).service(listens_ep)).await;
+        let req = aw_test::TestRequest::get().uri("/listens").to_request();
+        let resp = aw_test::call_service(&app, req).await;
+        let body = aw_test::read_body(resp).await;
+        let map: HashMap<String, u64> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(map["ep.mp3"], 2);
+        assert_eq!(map["other.mp3"], 1);
     }
 }
