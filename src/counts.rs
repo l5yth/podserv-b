@@ -91,16 +91,29 @@ mod tests {
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-    fn tmp_path() -> PathBuf {
+    /// RAII guard that deletes the wrapped path (and its `.tmp` sibling) on drop.
+    struct TempFile(PathBuf);
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+            let _ = std::fs::remove_file(self.0.with_extension("tmp"));
+        }
+    }
+
+    /// Returns a unique temp path and a [`TempFile`] guard that cleans it up on drop.
+    fn tmp_file() -> (PathBuf, TempFile) {
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("podserv_counts_test_{n}.json"))
+        let path = std::env::temp_dir().join(format!("podserv_counts_test_{n}.json"));
+        let guard = TempFile(path.clone());
+        (path, guard)
     }
 
     // --- ListenStore::load ---
 
     #[test]
     fn load_missing_file_gives_empty() {
-        let path = tmp_path();
+        let (path, _f) = tmp_file();
         let _ = std::fs::remove_file(&path);
         let store = ListenStore::load(path);
         assert!(store.snapshot().is_empty());
@@ -108,74 +121,64 @@ mod tests {
 
     #[test]
     fn load_invalid_json_gives_empty() {
-        let path = tmp_path();
+        let (path, _f) = tmp_file();
         std::fs::write(&path, "not json").unwrap();
-        let store = ListenStore::load(path.clone());
+        let store = ListenStore::load(path);
         assert!(store.snapshot().is_empty());
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
     fn load_valid_file_restores_counts() {
-        let path = tmp_path();
+        let (path, _f) = tmp_file();
         std::fs::write(&path, r#"{"ep.mp3":42}"#).unwrap();
-        let store = ListenStore::load(path.clone());
+        let store = ListenStore::load(path);
         assert_eq!(store.snapshot()["ep.mp3"], 42);
-        let _ = std::fs::remove_file(&path);
     }
 
     // --- ListenStore::increment ---
 
     #[test]
     fn increment_starts_at_one() {
-        let path = tmp_path();
-        let store = ListenStore::load(path.clone());
+        let (path, _f) = tmp_file();
+        let store = ListenStore::load(path);
         store.increment("ep.mp3");
         assert_eq!(store.snapshot()["ep.mp3"], 1);
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(path.with_extension("tmp"));
     }
 
     #[test]
     fn increment_accumulates() {
-        let path = tmp_path();
-        let store = ListenStore::load(path.clone());
+        let (path, _f) = tmp_file();
+        let store = ListenStore::load(path);
         store.increment("ep.mp3");
         store.increment("ep.mp3");
         store.increment("ep.mp3");
         assert_eq!(store.snapshot()["ep.mp3"], 3);
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(path.with_extension("tmp"));
     }
 
     #[test]
     fn increment_independent_keys() {
-        let path = tmp_path();
-        let store = ListenStore::load(path.clone());
+        let (path, _f) = tmp_file();
+        let store = ListenStore::load(path);
         store.increment("a.mp3");
         store.increment("b.mp3");
         store.increment("a.mp3");
         let snap = store.snapshot();
         assert_eq!(snap["a.mp3"], 2);
         assert_eq!(snap["b.mp3"], 1);
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(path.with_extension("tmp"));
     }
 
     // --- ListenStore::persist (via increment + reload) ---
 
     #[test]
     fn persist_and_reload() {
-        let path = tmp_path();
+        let (path, _f) = tmp_file();
         {
             let store = ListenStore::load(path.clone());
             store.increment("ep.mp3");
             store.increment("ep.mp3");
         }
-        let store2 = ListenStore::load(path.clone());
+        let store2 = ListenStore::load(path);
         assert_eq!(store2.snapshot()["ep.mp3"], 2);
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(path.with_extension("tmp"));
     }
 
     #[test]
@@ -192,15 +195,13 @@ mod tests {
 
     #[test]
     fn snapshot_returns_all_entries() {
-        let path = tmp_path();
-        let store = ListenStore::load(path.clone());
+        let (path, _f) = tmp_file();
+        let store = ListenStore::load(path);
         store.increment("a.mp3");
         store.increment("b.mp3");
         let snap = store.snapshot();
         assert_eq!(snap.len(), 2);
         assert!(snap.contains_key("a.mp3"));
         assert!(snap.contains_key("b.mp3"));
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(path.with_extension("tmp"));
     }
 }
