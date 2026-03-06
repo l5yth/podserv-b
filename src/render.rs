@@ -200,6 +200,15 @@ function play(i){{
   bar.style.display='block';
 }}
 audio.addEventListener('ended',()=>{{if(cur<total-1)play(cur+1);}});
+fetch('/listens').then(r=>r.json()).then(counts=>{{
+  document.querySelectorAll('.ep').forEach((el,i)=>{{
+    const c=counts[files[i]];
+    if(c!=null){{
+      const m=el.querySelector('.ep-meta');
+      m.textContent+='\u00b7 '+c.toLocaleString()+' '+(c===1?'listen':'listens');
+    }}
+  }});
+}}).catch(()=>{{}});
 </script>
 </body>
 </html>"#,
@@ -776,5 +785,21 @@ mod tests {
         let html = render_page(&default_config(), &[s1, s2]);
         assert!(html.contains("onclick=\"play(0)\""));
         assert!(html.contains("onclick=\"play(1)\""));
+    }
+
+    // --- render_page: listen counts ---
+
+    #[test]
+    fn render_page_contains_listens_fetch() {
+        let html = render_page(&default_config(), &[]);
+        assert!(html.contains("fetch('/listens')"));
+    }
+
+    #[test]
+    fn render_page_counts_fetch_updates_ep_meta() {
+        let html = render_page(&default_config(), &[]);
+        // The JS must reference .ep-meta and the listen label.
+        assert!(html.contains("ep-meta"));
+        assert!(html.contains("listen"));
     }
 }
