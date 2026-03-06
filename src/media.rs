@@ -17,7 +17,7 @@
 use id3::{Tag, TagLike};
 use std::fs;
 use std::path::Path;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 /// Metadata for a single MP3 episode.
 #[derive(Debug, Clone)]
@@ -41,9 +41,13 @@ pub struct Episode {
     pub size_mb: String,
     /// File size in bytes, from `fs::metadata`. Used for RSS `<enclosure length="…">`.
     pub size_bytes: u64,
-    /// File modification time, from `fs::metadata`. Used for RSS `<pubDate>`.
+    /// Publication date used for RSS `<pubDate>`.
     ///
-    /// `None` if the OS cannot provide the modification time.
+    /// When `--file-to-meta` is active, this is the date parsed from the
+    /// filename (falling back to the file modification time if no date pattern
+    /// is found). Otherwise it is the file modification time.
+    ///
+    /// `None` if neither source is available.
     pub pub_date: Option<SystemTime>,
     /// Embedded cover art as `(mime_type, image_bytes)`.
     ///
@@ -70,14 +74,18 @@ pub struct Section {
 /// - Files in a second-level subdirectory → heading = `"parent/child"`.
 /// - Directories deeper than two levels are ignored.
 ///
+/// When `file_to_meta` is `true`, [`parse_date_from_filename`] is applied to
+/// each episode's filename stem and used as [`Episode::pub_date`] when a
+/// valid date pattern is found, falling back to the file modification time.
+///
 /// Sections with no episodes are omitted. Sections and episodes within each
 /// section are sorted alphabetically.
-pub fn scan_sections(media_dir: &str) -> Vec<Section> {
+pub fn scan_sections(media_dir: &str, file_to_meta: bool) -> Vec<Section> {
     let root = Path::new(media_dir);
     let mut sections = Vec::new();
 
     // Root-level MP3s → "podcasts"
-    let root_eps = scan_mp3s_in_dir(root, media_dir);
+    let root_eps = scan_mp3s_in_dir(root, media_dir, file_to_meta);
     if !root_eps.is_empty() {
         sections.push(Section {
             heading: "podcasts".into(),
@@ -90,7 +98,7 @@ pub fn scan_sections(media_dir: &str) -> Vec<Section> {
         let path1 = root.join(&dir1);
 
         // Direct MP3s in this subdirectory → heading = directory name
-        let eps1 = scan_mp3s_in_dir(&path1, media_dir);
+        let eps1 = scan_mp3s_in_dir(&path1, media_dir, file_to_meta);
         if !eps1.is_empty() {
             sections.push(Section {
                 heading: dir1.clone(),
@@ -101,7 +109,7 @@ pub fn scan_sections(media_dir: &str) -> Vec<Section> {
         // Level-2 subdirectories → heading = "dir1/dir2"
         for dir2 in sorted_subdirs(&path1) {
             let path2 = path1.join(&dir2);
-            let eps2 = scan_mp3s_in_dir(&path2, media_dir);
+            let eps2 = scan_mp3s_in_dir(&path2, media_dir, file_to_meta);
             if !eps2.is_empty() {
                 sections.push(Section {
                     heading: format!("{dir1}/{dir2}"),
@@ -135,7 +143,11 @@ fn sorted_subdirs(dir: &Path) -> Vec<String> {
 ///
 /// `media_dir` is the root of the media tree; it is used to compute each
 /// episode's [`Episode::rel_path`].
-fn scan_mp3s_in_dir(dir: &Path, media_dir: &str) -> Vec<Episode> {
+///
+/// When `file_to_meta` is `true`, [`parse_date_from_filename`] is tried on
+/// each file's stem; if a valid date is found it replaces the mtime as
+/// [`Episode::pub_date`].
+fn scan_mp3s_in_dir(dir: &Path, media_dir: &str, file_to_meta: bool) -> Vec<Episode> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -166,7 +178,13 @@ fn scan_mp3s_in_dir(dir: &Path, media_dir: &str) -> Vec<Episode> {
             .map(|m| format!("{:.1}", m.len() as f64 / (1024.0 * 1024.0)))
             .unwrap_or_default();
         let size_bytes = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-        let pub_date = meta.and_then(|m| m.modified().ok());
+        let mtime = meta.and_then(|m| m.modified().ok());
+        let pub_date = if file_to_meta {
+            let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+            parse_date_from_filename(&stem).or(mtime)
+        } else {
+            mtime
+        };
 
         let (title, artist, album, year, duration, art) = match Tag::read_from_path(&path) {
             Ok(tag) => {
@@ -215,6 +233,92 @@ fn scan_mp3s_in_dir(dir: &Path, media_dir: &str) -> Vec<Episode> {
     episodes
 }
 
+/// Attempts to parse a date from a filename stem.
+///
+/// Recognises these patterns anywhere in the stem:
+/// - `YYYY-MM-DD` (ISO 8601 with hyphens)
+/// - `YYYY_MM_DD` (underscores)
+/// - `YYYYMMDD` (compact; requires non-digit boundaries on both sides)
+///
+/// Returns midnight UTC on the first valid date found as a [`SystemTime`], or
+/// `None` if no recognisable date is present or every candidate fails
+/// validation (e.g. month 13 or day 32).
+pub(crate) fn parse_date_from_filename(stem: &str) -> Option<SystemTime> {
+    let b = stem.as_bytes();
+    let n = b.len();
+
+    // Pass 1: YYYY-MM-DD or YYYY_MM_DD
+    for i in 0..n.saturating_sub(9) {
+        let sep = b[i + 4];
+        if (sep == b'-' || sep == b'_')
+            && b[i..i + 4].iter().all(u8::is_ascii_digit)
+            && b[i + 5..i + 7].iter().all(u8::is_ascii_digit)
+            && b[i + 7] == sep
+            && b[i + 8..i + 10].iter().all(u8::is_ascii_digit)
+        {
+            let year: u32 = stem[i..i + 4].parse().unwrap();
+            let month: u32 = stem[i + 5..i + 7].parse().unwrap();
+            let day: u32 = stem[i + 8..i + 10].parse().unwrap();
+            if let Some(secs) = date_to_unix_secs(year, month, day) {
+                return Some(SystemTime::UNIX_EPOCH + Duration::from_secs(secs));
+            }
+        }
+    }
+
+    // Pass 2: YYYYMMDD (non-digit boundaries required on both sides)
+    for i in 0..n.saturating_sub(7) {
+        if b[i..i + 8].iter().all(u8::is_ascii_digit)
+            && (i == 0 || !b[i - 1].is_ascii_digit())
+            && (i + 8 >= n || !b[i + 8].is_ascii_digit())
+        {
+            let year: u32 = stem[i..i + 4].parse().unwrap();
+            let month: u32 = stem[i + 4..i + 6].parse().unwrap();
+            let day: u32 = stem[i + 6..i + 8].parse().unwrap();
+            if let Some(secs) = date_to_unix_secs(year, month, day) {
+                return Some(SystemTime::UNIX_EPOCH + Duration::from_secs(secs));
+            }
+        }
+    }
+
+    None
+}
+
+/// Converts a calendar date to seconds since the Unix epoch (midnight UTC).
+///
+/// Returns `None` if `year` is before 1970, `month` is 0 or greater than 12,
+/// `day` is 0, or `day` exceeds the number of days in the given month
+/// (including leap-year handling for February).
+fn date_to_unix_secs(year: u32, month: u32, day: u32) -> Option<u64> {
+    if year < 1970 || month == 0 || month > 12 || day == 0 {
+        return None;
+    }
+    const DAYS_PER_MONTH: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let max_day = if month == 2 && is_leap_year(year) {
+        29
+    } else {
+        DAYS_PER_MONTH[(month - 1) as usize]
+    };
+    if day > max_day {
+        return None;
+    }
+    let mut days: u64 = 0;
+    for y in 1970..year {
+        days += if is_leap_year(y) { 366 } else { 365 };
+    }
+    for m in 1..month {
+        let dim = DAYS_PER_MONTH[(m - 1) as usize] as u64
+            + if m == 2 && is_leap_year(year) { 1 } else { 0 };
+        days += dim;
+    }
+    days += (day - 1) as u64;
+    Some(days * 86400)
+}
+
+/// Returns `true` if `year` is a leap year in the proleptic Gregorian calendar.
+fn is_leap_year(year: u32) -> bool {
+    year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,6 +334,134 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("podserv_media_test_{n}"));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    // --- is_leap_year ---
+
+    #[test]
+    fn is_leap_year_divisible_by_4() {
+        assert!(is_leap_year(2024));
+    }
+
+    #[test]
+    fn is_leap_year_century_not_leap() {
+        assert!(!is_leap_year(1900));
+    }
+
+    #[test]
+    fn is_leap_year_400_year_is_leap() {
+        assert!(is_leap_year(2000));
+    }
+
+    #[test]
+    fn is_leap_year_non_leap() {
+        assert!(!is_leap_year(2023));
+    }
+
+    // --- date_to_unix_secs ---
+
+    #[test]
+    fn date_to_unix_secs_epoch() {
+        assert_eq!(date_to_unix_secs(1970, 1, 1), Some(0));
+    }
+
+    #[test]
+    fn date_to_unix_secs_before_1970_returns_none() {
+        assert!(date_to_unix_secs(1969, 12, 31).is_none());
+    }
+
+    #[test]
+    fn date_to_unix_secs_zero_month_returns_none() {
+        assert!(date_to_unix_secs(2024, 0, 1).is_none());
+    }
+
+    #[test]
+    fn date_to_unix_secs_month_13_returns_none() {
+        assert!(date_to_unix_secs(2024, 13, 1).is_none());
+    }
+
+    #[test]
+    fn date_to_unix_secs_zero_day_returns_none() {
+        assert!(date_to_unix_secs(2024, 1, 0).is_none());
+    }
+
+    #[test]
+    fn date_to_unix_secs_day_32_returns_none() {
+        assert!(date_to_unix_secs(2024, 1, 32).is_none());
+    }
+
+    #[test]
+    fn date_to_unix_secs_leap_day_valid() {
+        assert!(date_to_unix_secs(2024, 2, 29).is_some());
+    }
+
+    #[test]
+    fn date_to_unix_secs_leap_day_invalid_non_leap() {
+        assert!(date_to_unix_secs(2023, 2, 29).is_none());
+    }
+
+    #[test]
+    fn date_to_unix_secs_known_value() {
+        // 2024-01-15 00:00:00 UTC = 1_705_276_800
+        assert_eq!(date_to_unix_secs(2024, 1, 15), Some(1_705_276_800));
+    }
+
+    // --- parse_date_from_filename ---
+
+    fn t(year: u32, month: u32, day: u32) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(date_to_unix_secs(year, month, day).unwrap())
+    }
+
+    #[test]
+    fn parse_date_no_date_returns_none() {
+        assert!(parse_date_from_filename("episode-title").is_none());
+    }
+
+    #[test]
+    fn parse_date_iso_hyphen_prefix() {
+        assert_eq!(
+            parse_date_from_filename("2024-01-15-my-episode"),
+            Some(t(2024, 1, 15))
+        );
+    }
+
+    #[test]
+    fn parse_date_iso_hyphen_suffix() {
+        assert_eq!(
+            parse_date_from_filename("my-episode-2024-01-15"),
+            Some(t(2024, 1, 15))
+        );
+    }
+
+    #[test]
+    fn parse_date_underscore_separator() {
+        assert_eq!(
+            parse_date_from_filename("2024_03_20_episode"),
+            Some(t(2024, 3, 20))
+        );
+    }
+
+    #[test]
+    fn parse_date_compact_yyyymmdd_with_boundary() {
+        assert_eq!(
+            parse_date_from_filename("20240115_episode"),
+            Some(t(2024, 1, 15))
+        );
+    }
+
+    #[test]
+    fn parse_date_compact_yyyymmdd_embedded_in_longer_number_returns_none() {
+        assert!(parse_date_from_filename("202401150").is_none());
+    }
+
+    #[test]
+    fn parse_date_invalid_month_returns_none() {
+        assert!(parse_date_from_filename("2024-13-01").is_none());
+    }
+
+    #[test]
+    fn parse_date_invalid_day_returns_none() {
+        assert!(parse_date_from_filename("2024-01-32").is_none());
     }
 
     // --- sorted_subdirs ---
@@ -266,14 +498,14 @@ mod tests {
     fn scan_mp3s_missing_dir_returns_empty() {
         let dir = new_temp_dir();
         let missing = dir.join("nonexistent");
-        assert!(scan_mp3s_in_dir(&missing, dir.to_str().unwrap()).is_empty());
+        assert!(scan_mp3s_in_dir(&missing, dir.to_str().unwrap(), false).is_empty());
         fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn scan_mp3s_empty_dir_returns_empty() {
         let dir = new_temp_dir();
-        assert!(scan_mp3s_in_dir(&dir, dir.to_str().unwrap()).is_empty());
+        assert!(scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false).is_empty());
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -281,7 +513,7 @@ mod tests {
     fn scan_mp3s_skips_no_extension() {
         let dir = new_temp_dir();
         fs::write(dir.join("noext"), b"x").unwrap();
-        assert!(scan_mp3s_in_dir(&dir, dir.to_str().unwrap()).is_empty());
+        assert!(scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false).is_empty());
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -290,7 +522,7 @@ mod tests {
         let dir = new_temp_dir();
         fs::write(dir.join("track.ogg"), b"x").unwrap();
         fs::write(dir.join("notes.txt"), b"x").unwrap();
-        assert!(scan_mp3s_in_dir(&dir, dir.to_str().unwrap()).is_empty());
+        assert!(scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false).is_empty());
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -298,7 +530,7 @@ mod tests {
     fn scan_mp3s_case_insensitive_extension() {
         let dir = new_temp_dir();
         fs::write(dir.join("track.MP3"), b"x").unwrap();
-        assert_eq!(scan_mp3s_in_dir(&dir, dir.to_str().unwrap()).len(), 1);
+        assert_eq!(scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false).len(), 1);
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -306,7 +538,7 @@ mod tests {
     fn scan_mp3s_no_id3_falls_back_to_filename() {
         let dir = new_temp_dir();
         fs::write(dir.join("ep.mp3"), b"not mp3 data").unwrap();
-        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap());
+        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false);
         assert_eq!(eps.len(), 1);
         assert_eq!(eps[0].rel_path, "ep.mp3");
         assert_eq!(eps[0].title, "ep.mp3");
@@ -327,7 +559,7 @@ mod tests {
         tag.set_duration(225_000); // 3:45
         fs::write(&path, []).unwrap();
         tag.write_to_path(&path, Version::Id3v23).unwrap();
-        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap());
+        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false);
         assert_eq!(eps.len(), 1);
         assert_eq!(eps[0].rel_path, "tagged.mp3");
         assert_eq!(eps[0].title, "My Title");
@@ -352,7 +584,7 @@ mod tests {
         });
         fs::write(&path, []).unwrap();
         tag.write_to_path(&path, Version::Id3v23).unwrap();
-        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap());
+        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false);
         assert!(eps[0].art.is_some());
         fs::remove_dir_all(dir).unwrap();
     }
@@ -370,7 +602,7 @@ mod tests {
         });
         fs::write(&path, []).unwrap();
         tag.write_to_path(&path, Version::Id3v23).unwrap();
-        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap());
+        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false);
         assert!(eps[0].art.is_none());
         fs::remove_dir_all(dir).unwrap();
     }
@@ -383,7 +615,7 @@ mod tests {
         tag.set_artist("Artist Only");
         fs::write(&path, []).unwrap();
         tag.write_to_path(&path, Version::Id3v23).unwrap();
-        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap());
+        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false);
         assert_eq!(eps[0].rel_path, "notitle.mp3");
         assert_eq!(eps[0].title, "notitle.mp3"); // unwrap_or(&filename)
         assert_eq!(eps[0].artist, "Artist Only");
@@ -398,7 +630,7 @@ mod tests {
         tag.set_title("Only Title");
         fs::write(&path, []).unwrap();
         tag.write_to_path(&path, Version::Id3v23).unwrap();
-        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap());
+        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false);
         assert_eq!(eps[0].artist, "Unknown"); // unwrap_or("Unknown")
         assert!(eps[0].album.is_empty()); // unwrap_or("")
         assert!(eps[0].year.is_empty()); // None → unwrap_or_default
@@ -412,7 +644,7 @@ mod tests {
         fs::write(dir.join("c.mp3"), b"x").unwrap();
         fs::write(dir.join("a.mp3"), b"x").unwrap();
         fs::write(dir.join("b.mp3"), b"x").unwrap();
-        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap());
+        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false);
         assert_eq!(
             eps.iter().map(|e| e.rel_path.as_str()).collect::<Vec<_>>(),
             ["a.mp3", "b.mp3", "c.mp3"]
@@ -426,7 +658,7 @@ mod tests {
         let sub = dir.join("shows");
         fs::create_dir(&sub).unwrap();
         fs::write(sub.join("ep.mp3"), b"x").unwrap();
-        let eps = scan_mp3s_in_dir(&sub, dir.to_str().unwrap());
+        let eps = scan_mp3s_in_dir(&sub, dir.to_str().unwrap(), false);
         assert_eq!(eps[0].rel_path, "shows/ep.mp3");
         fs::remove_dir_all(dir).unwrap();
     }
@@ -435,7 +667,7 @@ mod tests {
     fn scan_mp3s_size_bytes_nonzero() {
         let dir = new_temp_dir();
         fs::write(dir.join("ep.mp3"), b"not mp3 data but has bytes").unwrap();
-        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap());
+        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false);
         assert!(eps[0].size_bytes > 0);
         fs::remove_dir_all(dir).unwrap();
     }
@@ -444,8 +676,38 @@ mod tests {
     fn scan_mp3s_pub_date_is_set() {
         let dir = new_temp_dir();
         fs::write(dir.join("ep.mp3"), b"x").unwrap();
-        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap());
+        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false);
         assert!(eps[0].pub_date.is_some());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn scan_mp3s_file_to_meta_parses_date_from_name() {
+        let dir = new_temp_dir();
+        fs::write(dir.join("2024-01-15-episode.mp3"), b"x").unwrap();
+        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), true);
+        let expected = SystemTime::UNIX_EPOCH + Duration::from_secs(1_705_276_800);
+        assert_eq!(eps[0].pub_date, Some(expected));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn scan_mp3s_file_to_meta_false_does_not_parse_filename() {
+        let dir = new_temp_dir();
+        fs::write(dir.join("2024-01-15-episode.mp3"), b"x").unwrap();
+        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false);
+        let parsed_date = SystemTime::UNIX_EPOCH + Duration::from_secs(1_705_276_800);
+        // mtime of a freshly created file is ~now (2026), not 2024-01-15
+        assert_ne!(eps[0].pub_date, Some(parsed_date));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn scan_mp3s_file_to_meta_no_date_falls_back_to_mtime() {
+        let dir = new_temp_dir();
+        fs::write(dir.join("no-date-here.mp3"), b"x").unwrap();
+        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), true);
+        assert!(eps[0].pub_date.is_some()); // fell back to mtime
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -453,13 +715,13 @@ mod tests {
 
     #[test]
     fn scan_sections_missing_dir_returns_empty() {
-        assert!(scan_sections("/no/such/path/podserv_b_test_xyz").is_empty());
+        assert!(scan_sections("/no/such/path/podserv_b_test_xyz", false).is_empty());
     }
 
     #[test]
     fn scan_sections_empty_dir_no_sections() {
         let dir = new_temp_dir();
-        assert!(scan_sections(dir.to_str().unwrap()).is_empty());
+        assert!(scan_sections(dir.to_str().unwrap(), false).is_empty());
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -467,7 +729,7 @@ mod tests {
     fn scan_sections_flat_structure_heading_is_podcasts() {
         let dir = new_temp_dir();
         fs::write(dir.join("a.mp3"), b"x").unwrap();
-        let sections = scan_sections(dir.to_str().unwrap());
+        let sections = scan_sections(dir.to_str().unwrap(), false);
         assert_eq!(sections.len(), 1);
         assert_eq!(sections[0].heading, "podcasts");
         assert_eq!(sections[0].episodes.len(), 1);
@@ -480,7 +742,7 @@ mod tests {
         let sub = dir.join("radio-shows");
         fs::create_dir(&sub).unwrap();
         fs::write(sub.join("ep.mp3"), b"x").unwrap();
-        let sections = scan_sections(dir.to_str().unwrap());
+        let sections = scan_sections(dir.to_str().unwrap(), false);
         assert_eq!(sections.len(), 1);
         assert_eq!(sections[0].heading, "radio-shows");
         fs::remove_dir_all(dir).unwrap();
@@ -492,7 +754,7 @@ mod tests {
         let sub = dir.join("podcasts").join("2020");
         fs::create_dir_all(&sub).unwrap();
         fs::write(sub.join("ep.mp3"), b"x").unwrap();
-        let sections = scan_sections(dir.to_str().unwrap());
+        let sections = scan_sections(dir.to_str().unwrap(), false);
         assert_eq!(sections.len(), 1);
         assert_eq!(sections[0].heading, "podcasts/2020");
         fs::remove_dir_all(dir).unwrap();
@@ -505,7 +767,7 @@ mod tests {
         let sub = dir.join("music");
         fs::create_dir(&sub).unwrap();
         fs::write(sub.join("track.mp3"), b"x").unwrap();
-        let sections = scan_sections(dir.to_str().unwrap());
+        let sections = scan_sections(dir.to_str().unwrap(), false);
         assert_eq!(sections.len(), 2);
         assert_eq!(sections[0].heading, "podcasts");
         assert_eq!(sections[1].heading, "music");
@@ -517,7 +779,7 @@ mod tests {
         let dir = new_temp_dir();
         let sub = dir.join("empty");
         fs::create_dir(&sub).unwrap(); // no mp3s inside
-        assert!(scan_sections(dir.to_str().unwrap()).is_empty());
+        assert!(scan_sections(dir.to_str().unwrap(), false).is_empty());
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -531,7 +793,7 @@ mod tests {
         fs::write(b.join("z.mp3"), b"x").unwrap();
         fs::write(b.join("a.mp3"), b"x").unwrap();
         fs::write(a.join("ep.mp3"), b"x").unwrap();
-        let sections = scan_sections(dir.to_str().unwrap());
+        let sections = scan_sections(dir.to_str().unwrap(), false);
         assert_eq!(sections[0].heading, "a-shows");
         assert_eq!(sections[1].heading, "b-shows");
         assert_eq!(sections[1].episodes[0].rel_path, "b-shows/a.mp3");

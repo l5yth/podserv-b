@@ -4,11 +4,11 @@
 [![Codecov](https://codecov.io/gh/l5yth/podserv-b/graph/badge.svg)](https://codecov.io/gh/l5yth/podserv-b)
 [![GitHub Release](https://img.shields.io/github/v/release/l5yth/podserv-b)](https://github.com/l5yth/podserv-b/releases)
 [![Crates.io](https://img.shields.io/crates/v/podserv-b.svg)](https://crates.io/crates/podserv-b)
+[![AUR](https://img.shields.io/aur/version/podserv-b-git?logo=archlinux)](https://aur.archlinux.org/packages/podserv-b-git)
+[![Nix Flake](https://img.shields.io/badge/nix-flake-5277C3?logo=nixos)](https://github.com/l5yth/podserv-b/blob/main/flake.nix)
+[![Gentoo](https://img.shields.io/badge/gentoo-ebuild-54487A?logo=gentoo)](https://github.com/l5yth/podserv-b/tree/main/packaging/gentoo)
 [![Top Language](https://img.shields.io/github/languages/top/l5yth/podserv-b)](https://github.com/l5yth/podserv-b)
 [![License: Apache-2.0](https://img.shields.io/github/license/l5yth/podserv-b)](https://github.com/l5yth/podserv-b/blob/main/LICENSE)
-[![AUR](https://img.shields.io/aur/version/podserv-b-git?logo=archlinux)](https://aur.archlinux.org/packages/podserv-b-git)
-[![Gentoo](https://img.shields.io/badge/gentoo-ebuild-54487A?logo=gentoo)](https://github.com/l5yth/podserv-b/tree/main/packaging/gentoo)
-[![Nix Flake](https://img.shields.io/badge/nix-flake-5277C3?logo=nixos)](https://github.com/l5yth/podserv-b/blob/main/flake.nix)
 
 _a minimalist podcast server (type b) for serving media files on the web._
 
