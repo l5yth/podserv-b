@@ -4,7 +4,7 @@
   description = "a minimalist podcast server (type b) for serving media files on the web";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
     flake-utils.url = "github:numtide/flake-utils";
     crane.url = "github:ipetkov/crane";
   };

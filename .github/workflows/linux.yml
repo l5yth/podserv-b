@@ -92,10 +92,9 @@ jobs:
 
       - name: Checkout
         run: |
-          nix-env -iA nixpkgs.git
           git clone "https://github.com/${{ github.repository }}.git" /build
           git -C /build checkout "${{ github.sha }}"
 
       - name: Build
         working-directory: /build
-        run: nix build
+        run: nix build --no-update-lock-file
