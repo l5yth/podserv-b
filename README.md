@@ -45,7 +45,7 @@ systemctl enable --now podserv-b
 `podserv-b` binds to `127.0.0.1:8447` and serves mp3 files in `./media` by default
 
 ```sh
-podserv-b v0.1.1
+podserv-b v0.1.2
 a minimalist podcast server (type b) for serving media files on the web
 apache v2 (c) 2026 l5yth
 
@@ -54,11 +54,13 @@ Command-line arguments
 Usage: podserv-b [OPTIONS]
 
 Options:
-  -c, --config <CONFIG>  Path to the TOML configuration file [env: CONFIG=] [default: /etc/podserv-b.toml]
-  -m, --media <MEDIA>    Directory containing MP3 files to serve [env: MEDIA_DIR=] [default: media]
-  -b, --bind <BIND>      Address to bind the HTTP server to [env: BIND=] [default: 127.0.0.1:8447]
-  -h, --help             Print help
-  -V, --version          Print version
+  -c, --config <CONFIG>    Path to the TOML configuration file [default: /etc/podserv-b.toml]
+  -m, --media <MEDIA>      Directory containing MP3 files to serve [default: media]
+  -b, --bind <BIND>        Address to bind the HTTP server to [default: 127.0.0.1:8447]
+      --file-to-meta       Parse a date from the episode filename and use it as the publication date
+      --listens <LISTENS>  Path to the JSON file used to persist listen counts [default: /var/lib/podserv-b/listens.json]
+  -h, --help               Print help
+  -V, --version            Print version
 ```
 
 ### configuration
@@ -88,3 +90,19 @@ all fields are optional; defaults are used when the file is absent.
 | `GET /rss` | RSS 2.0 + iTunes podcast feed (XML) |
 | `GET /media/<file>` | audio file with range-request support |
 | `GET /art/<file>` | embedded cover art |
+| `GET /listens` | JSON object mapping each episode path to its listen count |
+
+### listen counting
+
+initial play requests (no `Range` header, or `Range: bytes=0-…`) are counted
+per episode. counts are persisted to a JSON file on every update so they
+survive restarts. the default path is `/var/lib/podserv-b/listens.json`
+(created automatically by the systemd unit via `StateDirectory=podserv-b`).
+override with `--listens <path>` or the `LISTENS_FILE` env var.
+
+### filename dates (`--file-to-meta`)
+
+pass `--file-to-meta` (or set `FILE_TO_META=1`) to parse a date from each
+episode's filename and use it as the RSS `<pubDate>`. supported patterns:
+`YYYY-MM-DD`, `YYYY_MM_DD`, `YYYYMMDD`. falls back to the file modification
+time when no valid date is found.
