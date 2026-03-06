@@ -94,7 +94,8 @@ struct Cli {
     #[arg(long, env = "FILE_TO_META")]
     file_to_meta: bool,
 
-    /// Path to the JSON file used to persist listen counts. Defaults to `listens.json` inside the media directory.
+    /// Path to the JSON file used to persist listen counts.
+    /// Defaults to `/var/lib/podserv-b/listens.json`.
     #[arg(long, env = "LISTENS_FILE", hide_env = true)]
     listens: Option<String>,
 }
@@ -330,11 +331,12 @@ async fn listens_ep(store: web::Data<ListenStore>) -> HttpResponse {
 /// Resolves the path of the listens JSON file.
 ///
 /// Returns the explicit path when `--listens` is provided, or defaults to
-/// `listens.json` inside `media_dir`.
-fn resolve_listens_path(explicit: Option<String>, media_dir: &str) -> PathBuf {
+/// `/var/lib/podserv-b/listens.json` — the FHS state directory created by
+/// the systemd `StateDirectory=podserv-b` directive.
+fn resolve_listens_path(explicit: Option<String>) -> PathBuf {
     explicit
         .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(media_dir).join("listens.json"))
+        .unwrap_or_else(|| PathBuf::from("/var/lib/podserv-b/listens.json"))
 }
 
 #[actix_web::main]
@@ -369,10 +371,7 @@ async fn main() -> std::io::Result<()> {
     });
 
     let art_map = web::Data::new(build_art_map(&sections));
-    let store = web::Data::new(ListenStore::load(resolve_listens_path(
-        cli.listens,
-        &media_dir,
-    )));
+    let store = web::Data::new(ListenStore::load(resolve_listens_path(cli.listens)));
     let media = web::Data::new(MediaDir(media_dir.clone()));
 
     // 512-request burst per IP, then 1 req/s replenishment.
@@ -445,16 +444,26 @@ mod tests {
         dir
     }
 
+    /// RAII guard that deletes the wrapped path (and its `.tmp` sibling) on drop.
+    struct TempFile(PathBuf);
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+            let _ = std::fs::remove_file(self.0.with_extension("tmp"));
+        }
+    }
+
     /// Creates a [`ListenStore`] backed by a fresh temp file.
     ///
-    /// Any leftover file from a previous test run is removed first so tests
-    /// always start with an empty store.
-    fn temp_store() -> (web::Data<ListenStore>, PathBuf) {
+    /// Returns the store and a [`TempFile`] guard; the guard must be kept alive
+    /// for the duration of the test and will delete the file on drop.
+    fn temp_store() -> (web::Data<ListenStore>, TempFile) {
         let n = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!("podserv_store_test_{n}.json"));
         let _ = std::fs::remove_file(&path); // start clean even after a failed run
         let store = web::Data::new(ListenStore::load(path.clone()));
-        (store, path)
+        (store, TempFile(path))
     }
 
     // --- Cli ---
@@ -878,14 +887,14 @@ mod tests {
     // --- resolve_listens_path ---
 
     #[test]
-    fn resolve_listens_path_defaults_to_media_dir() {
-        let path = resolve_listens_path(None, "/srv/pods");
-        assert_eq!(path, PathBuf::from("/srv/pods/listens.json"));
+    fn resolve_listens_path_defaults_to_var_lib() {
+        let path = resolve_listens_path(None);
+        assert_eq!(path, PathBuf::from("/var/lib/podserv-b/listens.json"));
     }
 
     #[test]
     fn resolve_listens_path_uses_explicit_when_set() {
-        let path = resolve_listens_path(Some("/tmp/custom.json".into()), "/srv/pods");
+        let path = resolve_listens_path(Some("/tmp/custom.json".into()));
         assert_eq!(path, PathBuf::from("/tmp/custom.json"));
     }
 
