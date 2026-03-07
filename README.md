@@ -18,6 +18,8 @@ scans a provided directory of mp3 files, reads their id3 tags, and serves a
 minimalist-themed single-page web page with an embedded audio player, album
 art, and download links. supports flat and nested media directories.
 
+Demo: [archiv.funkfabrik-b.de](https://archiv.funkfabrik-b.de/)
+
 ## installation
 
 ```sh
