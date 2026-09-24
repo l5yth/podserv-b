@@ -47,10 +47,10 @@ pub fn render_page(config: &Config, sections: &[Section]) -> String {
         .iter()
         .flat_map(|s| s.episodes.iter().map(|e| e.art.is_some()))
         .collect();
-    let files_json = serde_json::to_string(&all_rel_paths).unwrap();
-    let titles_json = serde_json::to_string(&all_titles).unwrap();
-    let artists_json = serde_json::to_string(&all_artists).unwrap();
-    let has_art_json = serde_json::to_string(&all_has_art).unwrap();
+    let files_json = json_for_script(&serde_json::to_string(&all_rel_paths).unwrap());
+    let titles_json = json_for_script(&serde_json::to_string(&all_titles).unwrap());
+    let artists_json = json_for_script(&serde_json::to_string(&all_artists).unwrap());
+    let has_art_json = json_for_script(&serde_json::to_string(&all_has_art).unwrap());
     let total = all_rel_paths.len();
 
     // Render each section
@@ -224,6 +224,22 @@ fetch('/listens').then(r=>r.json()).then(counts=>{{
         version = env!("CARGO_PKG_VERSION"),
         favicon_tag = favicon_tag,
     )
+}
+
+/// Escapes `<` as the JSON unicode escape `\u003C`, making a JSON document
+/// safe to embed inside an inline `<script>` element.
+///
+/// `serde_json` escapes what the JSON grammar requires and no more, so it
+/// leaves `<` alone. The HTML tokenizer, however, scans script-data content
+/// for the literal sequence `</script` before any JavaScript is parsed, so a
+/// value inside a string literal can still close the element. Escaping every
+/// `<` neutralises `</script`, `<script`, and `<!--` in one pass.
+///
+/// A blanket replacement is safe because `<` never appears as a structural
+/// JSON character: it can only occur inside a quoted string value. Both JSON
+/// and JavaScript read `\u003C` back as `<`, so values round-trip unchanged.
+fn json_for_script(json: &str) -> String {
+    json.replace('<', "\\u003C")
 }
 
 /// Escapes HTML special characters to prevent XSS.
@@ -801,5 +817,131 @@ mod tests {
         // The JS must look up ep-meta and use the singular/plural listen label.
         assert!(html.contains("querySelector('.ep-meta')"));
         assert!(html.contains("'listen':'listens'"));
+    }
+
+    // --- json_for_script ---
+
+    #[test]
+    fn json_for_script_leaves_plain_json_alone() {
+        assert_eq!(json_for_script(r#"["a","b"]"#), r#"["a","b"]"#);
+        assert_eq!(json_for_script("[true,false]"), "[true,false]");
+        assert_eq!(json_for_script(""), "");
+    }
+
+    #[test]
+    fn json_for_script_escapes_every_opening_angle() {
+        assert_eq!(json_for_script(r#"["<"]"#), r#"["\u003C"]"#);
+        assert_eq!(json_for_script(r#"["<<"]"#), r#"["\u003C\u003C"]"#);
+    }
+
+    #[test]
+    fn json_for_script_escapes_closing_tag() {
+        assert_eq!(json_for_script(r#"["</script>"]"#), r#"["\u003C/script>"]"#);
+    }
+
+    #[test]
+    fn json_for_script_leaves_closing_angle_alone() {
+        // Only `<` needs escaping; `>` cannot start a tag.
+        assert_eq!(json_for_script(r#"[">"]"#), r#"[">"]"#);
+    }
+
+    // --- render_page: script-element breakout (SPEC D2, ACCEPTANCE D-R7) ---
+
+    /// The rendered page must contain exactly one `</script`: the real closing
+    /// tag. Any second occurrence means a value broke out of the element.
+    ///
+    /// Matched case-insensitively, because the HTML tokenizer is: `</SCRIPT>`
+    /// closes the element just as `</script>` does. A case-sensitive oracle
+    /// would pass on a case-varied breakout.
+    fn count_script_closers(html: &str) -> usize {
+        html.to_ascii_lowercase().matches("</script").count()
+    }
+
+    #[test]
+    fn script_breakout_via_rel_path() {
+        let ep = make_ep(
+            "</script><img src=x onerror=alert(1)>.mp3",
+            "t",
+            "a",
+            "",
+            "",
+            "",
+            "1.0",
+            false,
+        );
+        let html = render_page(&default_config(), &[section("s", vec![ep])]);
+        assert_eq!(count_script_closers(&html), 1);
+    }
+
+    #[test]
+    fn script_breakout_via_title() {
+        let ep = make_ep(
+            "ok.mp3",
+            "</script><img src=x>",
+            "a",
+            "",
+            "",
+            "",
+            "1.0",
+            false,
+        );
+        let html = render_page(&default_config(), &[section("s", vec![ep])]);
+        assert_eq!(count_script_closers(&html), 1);
+    }
+
+    #[test]
+    fn script_breakout_via_artist() {
+        let ep = make_ep(
+            "ok.mp3",
+            "t",
+            "</script><img src=x>",
+            "",
+            "",
+            "",
+            "1.0",
+            false,
+        );
+        let html = render_page(&default_config(), &[section("s", vec![ep])]);
+        assert_eq!(count_script_closers(&html), 1);
+    }
+
+    #[test]
+    fn script_breakout_via_uppercase_close() {
+        // `</SCRIPT>` closes the element too; the oracle must see it.
+        let ep = make_ep(
+            "ok.mp3",
+            "</SCRIPT><IMG SRC=x>",
+            "a",
+            "",
+            "",
+            "",
+            "1.0",
+            false,
+        );
+        let html = render_page(&default_config(), &[section("s", vec![ep])]);
+        assert_eq!(count_script_closers(&html), 1);
+    }
+
+    #[test]
+    fn script_comment_open_is_escaped() {
+        // `<!--` pushes the tokenizer into script-data-escaped state, which
+        // swallows the rest of the document as script content.
+        let ep = make_ep("ok.mp3", "<!-- swallow", "a", "", "", "", "1.0", false);
+        let html = render_page(&default_config(), &[section("s", vec![ep])]);
+        assert!(!html.contains("<!-- swallow"));
+        // Positive half: the value must still be present, escaped. Without
+        // this the test would also pass if the value were dropped entirely.
+        assert!(html.contains(r"\u003C!-- swallow"));
+    }
+
+    #[test]
+    fn script_arrays_still_round_trip() {
+        // Escaping must not corrupt ordinary values.
+        let ep = make_ep("a b.mp3", "Title", "Artist", "", "", "", "1.0", false);
+        let html = render_page(&default_config(), &[section("s", vec![ep])]);
+        assert!(html.contains(r#"const files=["a b.mp3"]"#));
+        assert!(html.contains(r#"const titles=["Title"]"#));
+        assert!(html.contains(r#"const artists=["Artist"]"#));
+        assert!(html.contains("const hasArt=[false]"));
     }
 }

@@ -19,6 +19,38 @@ use std::fs;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
+/// MIME types accepted for embedded cover art.
+///
+/// This is an exact-match allowlist, deliberately not an `image/` prefix
+/// check. The stored value becomes the `Content-Type` of the `/art/` response
+/// verbatim, so the set of accepted strings is a security boundary:
+///
+/// - `image/svg+xml` satisfies an `image/` prefix, but an SVG navigated to
+///   directly executes any script it contains, on this origin.
+/// - `image/png\r\nX-Injected: yes` and `image/png"><script>…` also satisfy
+///   the prefix, and an ID3 `APIC` frame can declare either.
+///
+/// Raster formats only. A format that is not listed here yields no art rather
+/// than an unexamined response header.
+const ALLOWED_ART_MIME: [&str; 5] = [
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "image/avif",
+];
+
+/// Returns `true` if `mime` is an accepted cover-art type.
+///
+/// Compared case-insensitively, because MIME types are case-insensitive and an
+/// ID3 tag may carry `IMAGE/PNG`. The comparison is against the whole string,
+/// so trailing data such as a `;` parameter or an injected header is rejected.
+fn is_allowed_art_mime(mime: &str) -> bool {
+    ALLOWED_ART_MIME
+        .iter()
+        .any(|allowed| mime.eq_ignore_ascii_case(allowed))
+}
+
 /// Metadata for a single MP3 episode.
 #[derive(Debug, Clone)]
 pub struct Episode {
@@ -199,11 +231,11 @@ fn scan_mp3s_in_dir(dir: &Path, media_dir: &str, file_to_meta: bool) -> Vec<Epis
                         format!("{}:{:02}", s / 60, s % 60)
                     })
                     .unwrap_or_default();
-                // Only accept image/* MIME types to prevent Content-Type injection.
+                // Exact-match allowlist, not a prefix. See ALLOWED_ART_MIME.
                 let art = tag
                     .pictures()
                     .next()
-                    .filter(|p| p.mime_type.starts_with("image/"))
+                    .filter(|p| is_allowed_art_mime(&p.mime_type))
                     .map(|p| (p.mime_type.clone(), p.data.clone()));
                 (t, a, al, y, d, art)
             }
@@ -628,10 +660,89 @@ mod tests {
         let path = dir.join("html-art.mp3");
         let mut tag = Tag::new();
         tag.add_frame(id3::frame::Picture {
-            mime_type: "text/html".into(), // not image/* — must be rejected
+            mime_type: "text/html".into(), // not an allowed type — must be rejected
             picture_type: id3::frame::PictureType::CoverFront,
             description: String::new(),
             data: b"<script>alert(1)</script>".to_vec(),
+        });
+        fs::write(&path, []).unwrap();
+        tag.write_to_path(&path, Version::Id3v23).unwrap();
+        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false);
+        assert!(eps[0].art.is_none());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    // --- is_allowed_art_mime (SPEC D4, ACCEPTANCE D-R8) ---
+
+    #[test]
+    fn allowed_art_mime_accepts_every_listed_type() {
+        for mime in ALLOWED_ART_MIME {
+            assert!(is_allowed_art_mime(mime), "{mime} should be allowed");
+        }
+    }
+
+    #[test]
+    fn allowed_art_mime_is_case_insensitive() {
+        assert!(is_allowed_art_mime("IMAGE/PNG"));
+        assert!(is_allowed_art_mime("Image/Jpeg"));
+    }
+
+    #[test]
+    fn allowed_art_mime_rejects_svg() {
+        // An SVG navigated to directly executes its own script, on this
+        // origin. It satisfies an `image/` prefix, which is why the prefix
+        // check was replaced.
+        assert!(!is_allowed_art_mime("image/svg+xml"));
+        assert!(!is_allowed_art_mime("IMAGE/SVG+XML"));
+    }
+
+    #[test]
+    fn allowed_art_mime_rejects_header_injection() {
+        assert!(!is_allowed_art_mime("image/png\r\nX-Injected: yes"));
+        assert!(!is_allowed_art_mime(
+            "image/png\"><script>alert(1)</script>"
+        ));
+    }
+
+    #[test]
+    fn allowed_art_mime_rejects_prefix_and_parameter_forms() {
+        // Whole-string comparison: no prefix match, no trailing parameters.
+        assert!(!is_allowed_art_mime("image/"));
+        assert!(!is_allowed_art_mime("image/pngx"));
+        assert!(!is_allowed_art_mime("image/png; charset=utf-8"));
+        assert!(!is_allowed_art_mime("text/html"));
+        assert!(!is_allowed_art_mime(""));
+    }
+
+    #[test]
+    fn scan_mp3s_svg_art_excluded() {
+        let dir = new_temp_dir();
+        let path = dir.join("svg-art.mp3");
+        let mut tag = Tag::new();
+        tag.add_frame(id3::frame::Picture {
+            mime_type: "image/svg+xml".into(), // passes an `image/` prefix; must be rejected
+            picture_type: id3::frame::PictureType::CoverFront,
+            description: String::new(),
+            data: br#"<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>"#
+                .to_vec(),
+        });
+        fs::write(&path, []).unwrap();
+        tag.write_to_path(&path, Version::Id3v23).unwrap();
+        let eps = scan_mp3s_in_dir(&dir, dir.to_str().unwrap(), false);
+        assert!(eps[0].art.is_none());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn scan_mp3s_crlf_in_mime_excluded() {
+        let dir = new_temp_dir();
+        let path = dir.join("crlf-art.mp3");
+        let mut tag = Tag::new();
+        tag.add_frame(id3::frame::Picture {
+            mime_type: "image/png\r\nX-Injected: yes".into(),
+            picture_type: id3::frame::PictureType::CoverFront,
+            description: String::new(),
+            data: vec![0x89, 0x50, 0x4E, 0x47],
         });
         fs::write(&path, []).unwrap();
         tag.write_to_path(&path, Version::Id3v23).unwrap();
