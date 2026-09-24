@@ -47,7 +47,7 @@ systemctl enable --now podserv-b
 `podserv-b` binds to `127.0.0.1:8447` and serves mp3 files in `./media` by default
 
 ```sh
-podserv-b v0.1.2
+podserv-b v0.1.3
 a minimalist podcast server (type b) for serving media files on the web
 apache v2 (c) 2026 l5yth
 
