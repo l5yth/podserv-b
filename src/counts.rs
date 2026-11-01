@@ -54,15 +54,23 @@ impl ListenStore {
     /// Increments the listen count for `key` by one and persists the
     /// updated map to disk.
     ///
-    /// Persistence errors are printed to stderr but do not affect the
-    /// in-memory count or the server's request handling.
+    /// The lock is held until the file is written, so concurrent increments
+    /// persist one at a time and the newest counts always land last
+    /// (SPEC D6). A persistence error is printed to stderr only after the
+    /// lock is released, and the in-memory count is kept either way.
     pub fn increment(&self, key: &str) {
-        let snapshot = {
+        let result = {
             let mut map = self.counts.lock().unwrap();
             *map.entry(key.to_owned()).or_insert(0) += 1;
-            map.clone()
+            // Persist before the guard drops: every write goes through the same
+            // `.tmp` file, so two writers outside the lock would share it.
+            self.persist(&map)
         };
-        self.persist(&snapshot);
+        // Report after the guard drops: `eprintln!` panics if writing to stderr
+        // fails, and a panic under the lock would poison it for every later play.
+        if let Err(e) = result {
+            eprintln!("counts: persist error ({}): {e}", self.file.display());
+        }
     }
 
     /// Returns a snapshot of all current listen counts.
@@ -73,14 +81,14 @@ impl ListenStore {
     /// Writes `counts` to the backing JSON file atomically (write to a
     /// `.tmp` file, then rename it over the target).
     ///
-    /// Any I/O error is logged to stderr; the in-memory state is unaffected.
-    fn persist(&self, counts: &HashMap<String, u64>) {
+    /// Callers must hold the store's lock: the `.tmp` path is fixed, so two
+    /// calls at once would race on it (see [`ListenStore::increment`]).
+    /// The I/O error, if any, is returned for the caller to report once the
+    /// lock is released; the in-memory state is unaffected.
+    fn persist(&self, counts: &HashMap<String, u64>) -> std::io::Result<()> {
         let json = serde_json::to_string(counts).expect("counts serialisation is infallible");
         let tmp = self.file.with_extension("tmp");
-        let result = std::fs::write(&tmp, &json).and_then(|()| std::fs::rename(&tmp, &self.file));
-        if let Err(e) = result {
-            eprintln!("counts: persist error ({}): {e}", self.file.display());
-        }
+        std::fs::write(&tmp, &json).and_then(|()| std::fs::rename(&tmp, &self.file))
     }
 }
 
@@ -189,6 +197,49 @@ mod tests {
         // Must not panic; in-memory count is still incremented.
         store.increment("ep.mp3");
         assert_eq!(store.snapshot()["ep.mp3"], 1);
+    }
+
+    // --- concurrent increments (SPEC D6, ACCEPTANCE § D-R10) ---
+
+    /// Overlapping increments must leave the file complete and current.
+    ///
+    /// Eight threads start together and each records 100 first plays on keys
+    /// no other thread uses, so every snapshot is longer than the one before
+    /// it. After each `increment` returns, the file must parse and already
+    /// hold that play; once all threads finish, reloading it must give the
+    /// in-memory counts exactly. Writing outside the lock broke the first two:
+    /// threads shared one `.tmp` file, so renames failed with ENOENT, and the
+    /// file read back after an increment could be empty, torn or lack the play.
+    #[test]
+    fn concurrent_increments_keep_file_complete_and_current() {
+        const THREADS: usize = 8;
+        const PLAYS: usize = 100;
+        let (path, _f) = tmp_file();
+        let store = ListenStore::load(path.clone());
+        let start = std::sync::Barrier::new(THREADS);
+        std::thread::scope(|s| {
+            for t in 0..THREADS {
+                let (store, start, path) = (&store, &start, &path);
+                s.spawn(move || {
+                    start.wait();
+                    for i in 0..PLAYS {
+                        let key = format!("t{t}e{i}.mp3");
+                        store.increment(&key);
+                        let raw = std::fs::read_to_string(path).expect("listens file is readable");
+                        let on_disk: HashMap<String, u64> =
+                            serde_json::from_str(&raw).expect("listens file is valid JSON");
+                        assert_eq!(
+                            on_disk.get(&key),
+                            Some(&1),
+                            "file lacks {key} after its increment returned"
+                        );
+                    }
+                });
+            }
+        });
+        let reloaded = ListenStore::load(path).snapshot();
+        assert_eq!(reloaded.len(), THREADS * PLAYS);
+        assert_eq!(reloaded, store.snapshot());
     }
 
     // --- ListenStore::snapshot ---
