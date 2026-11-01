@@ -25,8 +25,8 @@ mod render;
 mod rss;
 
 use actix_governor::{Governor, GovernorConfigBuilder, KeyExtractor, SimpleKeyExtractionError};
-use actix_web::http::header;
-use actix_web::{App, HttpRequest, HttpResponse, HttpServer, get, web};
+use actix_web::http::{Method, header};
+use actix_web::{App, HttpRequest, HttpResponse, HttpServer, route, web};
 use clap::Parser;
 use config::Config;
 use counts::ListenStore;
@@ -198,7 +198,7 @@ fn compute_etag(s: &str) -> String {
 /// Returns `304 Not Modified` when the client's `If-None-Match` header
 /// matches the current ETag, otherwise returns the full HTML with `ETag`
 /// and `Cache-Control: no-cache` headers.
-#[get("/")]
+#[route("/", method = "GET", method = "HEAD")]
 async fn index(cache: web::Data<PageCache>, req: HttpRequest) -> HttpResponse {
     if let Some(inm) = req.headers().get(header::IF_NONE_MATCH)
         && inm.as_bytes() == cache.etag.as_bytes()
@@ -230,7 +230,7 @@ async fn index(cache: web::Data<PageCache>, req: HttpRequest) -> HttpResponse {
 /// to stay safe if the implementation ever changes.
 ///
 /// The `/media/` route has its own independent traversal check.
-#[get("/art/{path:.*}")]
+#[route("/art/{path:.*}", method = "GET", method = "HEAD")]
 async fn art(req_path: web::Path<String>, art_map: web::Data<ArtMap>) -> HttpResponse {
     let rel = req_path.as_str();
     if Path::new(rel)
@@ -253,7 +253,7 @@ async fn art(req_path: web::Path<String>, art_map: web::Data<ArtMap>) -> HttpRes
 /// Returns `304 Not Modified` when the client's `If-None-Match` header
 /// matches the current ETag, otherwise returns the full XML with `ETag`
 /// and `Cache-Control: no-cache` headers.
-#[get("/rss")]
+#[route("/rss", method = "GET", method = "HEAD")]
 async fn rss_feed(cache: web::Data<RssCache>, req: HttpRequest) -> HttpResponse {
     if let Some(inm) = req.headers().get(header::IF_NONE_MATCH)
         && inm.as_bytes() == cache.etag.as_bytes()
@@ -274,11 +274,14 @@ async fn rss_feed(cache: web::Data<RssCache>, req: HttpRequest) -> HttpResponse 
 /// start of a new play). Seeking within an already-playing file sends
 /// range requests with a non-zero start, which are served but not counted.
 ///
+/// `HEAD` gets the full-file headers, including the size, and is never
+/// counted: it transfers no audio. `Range` applies to `GET` only.
+///
 /// Returns `400` if the path contains `..` or leading `/` components.
 /// Returns `404` if the file does not exist or cannot be opened.
 /// Range requests, ETags, and `Last-Modified` are handled by
 /// [`actix_files::NamedFile`].
-#[get("/media/{path:.*}")]
+#[route("/media/{path:.*}", method = "GET", method = "HEAD")]
 async fn serve_media(
     req_path: web::Path<String>,
     media_dir: web::Data<MediaDir>,
@@ -298,11 +301,13 @@ async fn serve_media(
         Err(_) => return HttpResponse::NotFound().finish(),
     };
     // Count only initial play requests, not mid-stream seeking range requests.
-    let is_initial = req
-        .headers()
-        .get(header::RANGE)
-        .map(|v| v.as_bytes().starts_with(b"bytes=0-"))
-        .unwrap_or(true);
+    // HEAD transfers no audio, so it is never a play.
+    let is_initial = req.method() != Method::HEAD
+        && req
+            .headers()
+            .get(header::RANGE)
+            .map(|v| v.as_bytes().starts_with(b"bytes=0-"))
+            .unwrap_or(true);
     if is_initial {
         store.increment(rel);
     }
@@ -316,9 +321,9 @@ async fn serve_media(
 /// fetches this endpoint on load to display per-episode listen counts.
 ///
 /// Named `listens_ep` (not `listens`) to avoid a name collision: the
-/// `#[get]` macro generates a struct with the same name as the function,
+/// `#[route]` macro generates a struct with the same name as the function,
 /// which would clash with the `listens` field on [`Cli`].
-#[get("/listens")]
+#[route("/listens", method = "GET", method = "HEAD")]
 async fn listens_ep(store: web::Data<ListenStore>) -> HttpResponse {
     // Serialising HashMap<String, u64> is infallible.
     let json =
@@ -411,6 +416,7 @@ async fn main() -> std::io::Result<()> {
 mod tests {
     use super::*;
     use actix_web::App;
+    use actix_web::http::Method;
     use actix_web::test as aw_test;
     use media::Episode;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -935,6 +941,52 @@ mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 
+    #[actix_web::test]
+    async fn full_app_wiring_answers_head() {
+        let (store, _path) = temp_store();
+        let dir = new_temp_dir();
+        std::fs::write(dir.join("ep.mp3"), b"audio data").unwrap();
+        let html = render::render_page(&Config::default(), &[]);
+        let etag = compute_etag(&html);
+        let cache = web::Data::new(PageCache { html, etag });
+        let xml = rss::render_rss(&Config::default(), &[]);
+        let rss_etag = compute_etag(&xml);
+        let rss_cache = web::Data::new(RssCache {
+            xml,
+            etag: rss_etag,
+        });
+        let mut map = ArtMap::new();
+        map.insert("ep.mp3".to_string(), ("image/jpeg".to_string(), vec![0xFF]));
+        let art_map = web::Data::new(map);
+        let media = web::Data::new(MediaDir(dir.to_str().unwrap().into()));
+        let app = aw_test::init_service(
+            App::new()
+                .app_data(cache)
+                .app_data(rss_cache)
+                .app_data(art_map)
+                .app_data(store)
+                .app_data(media)
+                .service(index)
+                .service(rss_feed)
+                .service(art)
+                .service(serve_media)
+                .service(listens_ep),
+        )
+        .await;
+        // HEAD must reach the same handler as GET on every route. The test
+        // service bypasses the HTTP/1 codec, which is what drops the body on
+        // the wire, so only the status is checked here.
+        for uri in ["/", "/rss", "/art/ep.mp3", "/media/ep.mp3", "/listens"] {
+            let req = aw_test::TestRequest::default()
+                .method(Method::HEAD)
+                .uri(uri)
+                .to_request();
+            let resp = aw_test::call_service(&app, req).await;
+            assert_eq!(resp.status().as_u16(), 200, "HEAD {uri}");
+        }
+        std::fs::remove_dir_all(dir).ok();
+    }
+
     // --- serve_media handler ---
 
     #[actix_web::test]
@@ -1057,6 +1109,31 @@ mod tests {
             .insert_header((header::RANGE, "bytes=100-200"))
             .to_request();
         aw_test::call_service(&app, req).await;
+        assert!(!store.snapshot().contains_key("ep.mp3"));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[actix_web::test]
+    async fn serve_media_no_increment_on_head() {
+        let (store, _path) = temp_store();
+        let dir = new_temp_dir();
+        std::fs::write(dir.join("ep.mp3"), b"audio data").unwrap();
+        let media = web::Data::new(MediaDir(dir.to_str().unwrap().into()));
+        let app = aw_test::init_service(
+            App::new()
+                .app_data(store.clone())
+                .app_data(media)
+                .service(serve_media),
+        )
+        .await;
+        let req = aw_test::TestRequest::default()
+            .method(Method::HEAD)
+            .uri("/media/ep.mp3")
+            .to_request();
+        let resp = aw_test::call_service(&app, req).await;
+        // HEAD is served (status 200) but transfers no audio, so it is not a
+        // play and must not be counted (SPEC D7).
+        assert_eq!(resp.status().as_u16(), 200);
         assert!(!store.snapshot().contains_key("ep.mp3"));
         std::fs::remove_dir_all(dir).ok();
     }
